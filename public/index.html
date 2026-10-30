@@ -1,0 +1,1916 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Another Me - Kontrol Persona WhatsApp</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <style>
+    ::-webkit-scrollbar { display: none; }
+    * { -ms-overflow-style: none; scrollbar-width: none; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen font-sans flex flex-col antialiased">
+
+  <!-- Desktop Sticky Navbar 64px / Mobile 54px -->
+  <header class="sticky top-0 z-50 bg-white/95 backdrop-blur border-b border-slate-200 h-[54px] md:h-[64px] flex items-center px-4 md:px-8 justify-between shadow-xs">
+    <div class="flex items-center gap-6">
+      <h1 class="text-base md:text-lg font-bold tracking-tight text-slate-900">
+        Another Me
+      </h1>
+
+      <!-- Navigation Tabs -->
+      <nav class="flex items-center gap-1 bg-slate-100 p-1 rounded-lg text-xs font-semibold">
+        <button id="tab-btn-dashboard" onclick="switchTab('dashboard')" class="px-3 py-1.5 rounded-md transition-all cursor-pointer bg-white text-slate-900 shadow-2xs">
+          Dashboard
+        </button>
+        <button id="tab-btn-persona" onclick="switchTab('persona')" class="px-3 py-1.5 rounded-md transition-all cursor-pointer text-slate-600 hover:text-slate-900">
+          Kustom Persona
+        </button>
+        <button id="tab-btn-knowledge" onclick="switchTab('knowledge')" class="px-3 py-1.5 rounded-md transition-all cursor-pointer text-slate-600 hover:text-slate-900">
+          Knowledge Base
+        </button>
+        <button id="tab-btn-stickers" onclick="switchTab('stickers')" class="px-3 py-1.5 rounded-md transition-all cursor-pointer text-slate-600 hover:text-slate-900">
+          Stiker WhatsApp
+        </button>
+        <button id="tab-btn-training" onclick="switchTab('training')" class="px-3 py-1.5 rounded-md transition-all cursor-pointer text-slate-600 hover:text-slate-900 flex items-center gap-1.5">
+          <span class="w-1.5 h-1.5 rounded-full bg-purple-500"></span>
+          Training Room
+        </button>
+      </nav>
+    </div>
+
+    <!-- Actions di Navbar -->
+    <div class="flex items-center gap-3">
+      <!-- Master Service Switch Button -->
+      <button id="btn-toggle-service" onclick="toggleMasterService()" class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all duration-150 shadow-2xs cursor-pointer bg-emerald-50 border-emerald-300 text-emerald-700 hover:bg-emerald-100">
+        <span class="w-2.5 h-2.5 rounded-full bg-emerald-500" id="service-dot"></span>
+        <span id="service-text">Service: ON</span>
+      </button>
+
+      <!-- Tombol Konfigurasi LLM -->
+      <button onclick="openModalLLM()" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 transition-colors shadow-2xs cursor-pointer">
+        Konfigurasi LLM
+      </button>
+    </div>
+  </header>
+
+  <!-- ======================================================== -->
+  <!-- TAB 1: DASHBOARD UTAMA -->
+  <!-- ======================================================== -->
+  <main id="view-dashboard" class="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6 space-y-6">
+
+    <!-- Row 1: Status Ringkas Sistem & Mode AI -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+
+      <!-- Kartu 1: Status WhatsApp & QR -->
+      <div class="bg-white rounded-xl border border-slate-200 p-4 shadow-xs flex flex-col justify-between">
+        <div>
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs font-bold uppercase tracking-wider text-slate-500">Koneksi WhatsApp</span>
+            <span id="wa-pill" class="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-500 border border-slate-200">
+              Memeriksa
+            </span>
+          </div>
+          <p id="wa-text-desc" class="text-xs text-slate-600">Menghubungkan ke server WhatsApp...</p>
+        </div>
+
+        <div id="qr-wrapper" class="hidden mt-3 pt-3 border-t border-slate-100 flex items-center gap-3">
+          <div id="qrcode" class="w-24 h-24 bg-white p-1 rounded border border-slate-200 shrink-0"></div>
+          <p class="text-[11px] text-slate-500 leading-tight">Scan QR ini via WhatsApp di HP Anda (Perangkat Tertaut).</p>
+        </div>
+      </div>
+
+      <!-- Kartu 2: Status Provider LLM -->
+      <div class="bg-white rounded-xl border border-slate-200 p-4 shadow-xs flex flex-col justify-between">
+        <div>
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs font-bold uppercase tracking-wider text-slate-500">Mesin AI (LLM)</span>
+            <span id="llm-pill" class="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-500 border border-slate-200">
+              Memeriksa
+            </span>
+          </div>
+          <p id="llm-model-name" class="text-xs font-semibold text-slate-800 truncate">-</p>
+          <p id="llm-base-url" class="text-[11px] font-mono text-slate-500 truncate mt-0.5">-</p>
+        </div>
+        <div class="mt-3 pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
+          <span class="flex items-center gap-1">
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+            <span id="agent-tools-badge">Agent Tools Aktif</span>
+          </span>
+          <button onclick="openModalLLM()" class="text-blue-600 hover:text-blue-800 font-medium cursor-pointer">Ubah</button>
+        </div>
+      </div>
+
+      <!-- Kartu 3: Pengaturan Filter AI -->
+      <div class="bg-white rounded-xl border border-slate-200 p-4 shadow-xs flex flex-col justify-between">
+        <div>
+          <span class="text-xs font-bold uppercase tracking-wider text-slate-500 block mb-3">Filter Auto-Reply</span>
+          <div class="space-y-2">
+            <div class="flex items-center justify-between">
+              <div>
+                <span class="text-xs font-medium text-slate-800">Mode Whitelist</span>
+                <p class="text-[10px] text-slate-500">Hanya balas kontak di tabel</p>
+              </div>
+              <button id="btn-toggle-whitelist" class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border border-transparent transition-colors duration-150 ease-in-out bg-slate-300">
+                <span id="whitelist-knob" class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-xs transition duration-150 ease-in-out translate-x-0.5 mt-0.5"></span>
+              </button>
+            </div>
+
+            <div class="flex items-center justify-between">
+              <div>
+                <span class="text-xs font-medium text-slate-800">Balas Pesan Grup</span>
+                <p class="text-[10px] text-slate-500">Auto-reply di grup WA</p>
+              </div>
+              <button id="btn-toggle-groups" class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border border-transparent transition-colors duration-150 ease-in-out bg-slate-300">
+                <span id="groups-knob" class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-xs transition duration-150 ease-in-out translate-x-0.5 mt-0.5"></span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="mt-3 pt-2 border-t border-slate-100 text-[11px] text-slate-500 flex justify-between">
+          <span id="contact-count-text">0 Kontak</span>
+          <span id="active-chats-count">0 Percakapan</span>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Row 2: Tabel Kelola Kontak -->
+    <div class="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-xs">
+      <div class="p-4 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white">
+        <div>
+          <h2 class="text-sm font-bold text-slate-900">Daftar Kontak & Persona</h2>
+          <p class="text-xs text-slate-500">Atur kategori kepribadian dan izin balas otomatis per nomor.</p>
+        </div>
+        <button onclick="openModalTambah()" class="inline-flex items-center justify-center px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white transition-colors duration-150 shadow-xs cursor-pointer">
+          + Tambah Kontak
+        </button>
+      </div>
+
+      <div class="overflow-x-auto">
+        <table class="w-full text-left text-xs">
+          <thead class="bg-slate-50 text-slate-600 uppercase tracking-wider border-b border-slate-200 font-semibold">
+            <tr>
+              <th class="px-4 py-2.5">Nama</th>
+              <th class="px-4 py-2.5">Nomor WA</th>
+              <th class="px-4 py-2.5">Kategori</th>
+              <th class="px-4 py-2.5">Catatan Persona</th>
+              <th class="px-4 py-2.5 text-center">Status AI</th>
+              <th class="px-4 py-2.5 text-right">Aksi</th>
+            </tr>
+          </thead>
+          <tbody id="contacts-table-body" class="divide-y divide-slate-100">
+            <tr>
+              <td colspan="6" class="px-4 py-6 text-center text-slate-400">Memuat data kontak...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Row 3: Pemantau Balasan AI & Riwayat Percakapan -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+      <!-- Kolom Kiri: Daftar Kontak Percakapan -->
+      <div class="bg-white rounded-xl border border-slate-200 p-4 shadow-xs flex flex-col h-[480px]">
+        <div class="mb-3">
+          <h2 class="text-sm font-bold text-slate-900">Riwayat Percakapan</h2>
+          <p class="text-xs text-slate-500">Pilih kontak untuk menginspeksi balasan AI.</p>
+        </div>
+
+        <div id="conversations-list" class="flex-1 overflow-y-auto space-y-2 pr-1">
+          <p class="text-xs text-slate-400 p-4 text-center">Belum ada percakapan masuk.</p>
+        </div>
+      </div>
+
+      <!-- Kolom Kanan: Detail Isi Obrolan dan Balasan AI -->
+      <div class="lg:col-span-2 bg-white rounded-xl border border-slate-200 p-4 shadow-xs flex flex-col h-[480px]">
+        <div class="border-b border-slate-200 pb-3 mb-3 flex items-center justify-between">
+          <div>
+            <h3 id="chat-header-name" class="text-sm font-bold text-slate-900">Pilih Kontak</h3>
+            <p id="chat-header-meta" class="text-xs text-slate-500">Klik salah satu kontak di sebelah kiri untuk melihat dialognya.</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <span id="chat-header-badge" class="hidden px-2.5 py-0.5 rounded-full text-[11px] font-medium border"></span>
+            <button id="btn-clear-chat" onclick="clearCurrentChatHistory()" class="hidden text-xs px-2.5 py-1 rounded bg-rose-50 hover:bg-rose-100 text-rose-700 font-semibold border border-rose-200 transition-colors cursor-pointer flex items-center gap-1">
+              <span>Hapus History</span>
+            </button>
+          </div>
+        </div>
+
+        <div id="chat-messages-container" class="flex-1 overflow-y-auto space-y-3 p-2 bg-slate-50 rounded-lg border border-slate-200">
+          <div class="h-full flex items-center justify-center text-xs text-slate-400">
+            Belum ada kontak yang dipilih.
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Row 4: Log Aktivitas Konsol -->
+    <div class="bg-white rounded-xl border border-slate-200 p-4 shadow-xs">
+      <div class="flex items-center justify-between mb-3">
+        <div>
+          <h2 class="text-xs font-bold uppercase tracking-wider text-slate-700">Log Aktivitas Layanan</h2>
+        </div>
+        <button onclick="loadLogs()" class="text-xs px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium cursor-pointer">
+          Segarkan
+        </button>
+      </div>
+      <div id="logs-container" class="space-y-1.5 max-h-40 overflow-y-auto font-mono text-xs text-slate-700 bg-slate-50 p-3 rounded-lg border border-slate-200">
+        <p class="text-slate-400">Belum ada aktivitas baru.</p>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- ======================================================== -->
+  <!-- TAB 2: KUSTOM PERSONA & ATURAN GAYA KETIK -->
+  <!-- ======================================================== -->
+  <main id="view-persona" class="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6 space-y-6 hidden">
+    
+    <!-- Bagian 1: Identitas & Aturan Umum Pengetikan -->
+    <div class="bg-white rounded-xl border border-slate-200 p-5 shadow-xs">
+      <div class="flex justify-between items-center mb-4">
+        <div>
+          <h2 class="text-base font-bold text-slate-900">Identitas & Gaya Pengetikan Umum</h2>
+          <p class="text-xs text-slate-500">Aturan ketik ini akan diterapkan ke semua pesan (misal: jarang pakai titik, huruf kecil, singkatan santai).</p>
+        </div>
+        <button onclick="saveGeneralPersona()" class="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-2xs cursor-pointer">
+          Simpan Aturan Umum
+        </button>
+      </div>
+
+      <div class="space-y-4 text-xs">
+        <div>
+          <label class="block font-semibold text-slate-700 mb-1">Definisi Identitas AI (System Prompt)</label>
+          <textarea id="input-general-identity" rows="2" class="w-full bg-slate-50 border border-slate-300 rounded-lg p-3 text-slate-900 focus:outline-none focus:border-emerald-500"></textarea>
+        </div>
+        <div>
+          <label class="block font-semibold text-slate-700 mb-1">Aturan Gaya Ketik (Satu aturan per baris)</label>
+          <textarea id="input-general-rules" rows="4" class="w-full bg-slate-50 border border-slate-300 rounded-lg p-3 text-slate-900 font-mono focus:outline-none focus:border-emerald-500"></textarea>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bagian 2: Kustomisasi Kategori Persona (Pacar, Teman Dekat, Formal, dll) -->
+    <div class="bg-white rounded-xl border border-slate-200 p-5 shadow-xs">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+        <div>
+          <h2 class="text-base font-bold text-slate-900">Kategori Persona Relasi</h2>
+          <p class="text-xs text-slate-500">Sesuaikan nada bicara, kosakata panggilan, dan contoh obrolan (Few-Shot) per hubungan.</p>
+        </div>
+        <button onclick="openModalCategory()" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-2xs cursor-pointer">
+          + Tambah Kategori Baru
+        </button>
+      </div>
+
+      <!-- Grid Kategori Persona -->
+      <div id="persona-categories-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <!-- Render dinamis via JS -->
+      </div>
+    </div>
+
+  </main>
+
+  <!-- ======================================================== -->
+  <!-- TAB 3: KNOWLEDGE BASE INJECTION (MULTI-FORMAT) -->
+  <!-- ======================================================== -->
+  <main id="view-knowledge" class="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6 space-y-6 hidden">
+    
+    <!-- Row Atas: Upload Dokumen & Snippet Input -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+      <!-- Upload Berkas Dokumen -->
+      <div class="bg-white rounded-xl border border-slate-200 p-5 shadow-xs flex flex-col justify-between">
+        <div>
+          <h2 class="text-base font-bold text-slate-900 mb-1">Unggah Dokumen Pengetahuan</h2>
+          <p class="text-xs text-slate-500 mb-4">Format didukung: <code>.txt</code>, <code>.md</code>, <code>.pdf</code>, <code>.docx</code>, <code>.json</code>, <code>.csv</code></p>
+
+          <form id="form-upload-doc" onsubmit="handleUploadKnowledge(event)" class="space-y-3 text-xs">
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">Judul Dokumen</label>
+              <input type="text" id="input-doc-title" placeholder="Misal: Jadwal Kuliah Semester 5, Catatan Pribadi, dll" required class="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-slate-900 focus:outline-none focus:border-emerald-500">
+            </div>
+
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">Kategori Sasaran</label>
+              <select id="select-doc-category" class="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-slate-900 focus:outline-none focus:border-emerald-500">
+                <option value="all">Semua Kategori (Universal)</option>
+                <option value="formal">Khusus Formal / Dosen</option>
+                <option value="teman_dekat">Khusus Teman Dekat</option>
+                <option value="pacar">Khusus Pacar</option>
+              </select>
+            </div>
+
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">Pilih File</label>
+              <input type="file" id="input-doc-file" required accept=".txt,.md,.pdf,.docx,.json,.csv" class="w-full text-xs text-slate-600 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200">
+            </div>
+
+            <div class="pt-2">
+              <button type="submit" id="btn-submit-upload" class="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg shadow-2xs cursor-pointer transition-colors">
+                Ekstrak & Simpan Dokumen
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <!-- Tambah Catatan Teks Langsung -->
+      <div class="bg-white rounded-xl border border-slate-200 p-5 shadow-xs flex flex-col justify-between">
+        <div>
+          <h2 class="text-base font-bold text-slate-900 mb-1">Catatan Faktual Langsung (Snippet)</h2>
+          <p class="text-xs text-slate-500 mb-4">Ketik langsung informasi penting yang harus diketahui AI (jadwal, alamat, fakta diri).</p>
+
+          <form id="form-snippet" onsubmit="handleSaveSnippet(event)" class="space-y-3 text-xs">
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">Judul Catatan</label>
+              <input type="text" id="input-snippet-title" placeholder="Misal: Alamat Rumah, Hobi, Hal yang Tidak Disukai" required class="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-slate-900 focus:outline-none focus:border-emerald-500">
+            </div>
+
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">Kategori Sasaran</label>
+              <select id="select-snippet-category" class="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-slate-900 focus:outline-none focus:border-emerald-500">
+                <option value="all">Semua Kategori (Universal)</option>
+                <option value="formal">Khusus Formal / Dosen</option>
+                <option value="teman_dekat">Khusus Teman Dekat</option>
+                <option value="pacar">Khusus Pacar</option>
+              </select>
+            </div>
+
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">Isi Informasi Faktual</label>
+              <textarea id="input-snippet-content" rows="3" placeholder="Tuliskan fakta penting di sini..." required class="w-full bg-slate-50 border border-slate-300 rounded-lg p-3 text-slate-900 focus:outline-none focus:border-emerald-500"></textarea>
+            </div>
+
+            <div class="pt-2">
+              <button type="submit" class="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg shadow-2xs cursor-pointer transition-colors">
+                Simpan Catatan Faktual
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Tabel Daftar Dokumen & Status Injeksi -->
+    <div class="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-xs">
+      <div class="p-4 border-b border-slate-200">
+        <h2 class="text-sm font-bold text-slate-900">Daftar Dokumen Pengetahuan Terdaftar</h2>
+        <p class="text-xs text-slate-500">Dokumen yang berstatus 'Aktif' akan disuntikkan secara otomatis ke dalam System Prompt AI.</p>
+      </div>
+
+      <div class="overflow-x-auto">
+        <table class="w-full text-left text-xs">
+          <thead class="bg-slate-50 text-slate-600 uppercase tracking-wider border-b border-slate-200 font-semibold">
+            <tr>
+              <th class="px-4 py-2.5">Judul Dokumen</th>
+              <th class="px-4 py-2.5">Tipe</th>
+              <th class="px-4 py-2.5">Target Kategori</th>
+              <th class="px-4 py-2.5">Panjang Karakter</th>
+              <th class="px-4 py-2.5 text-center">Status Injeksi</th>
+              <th class="px-4 py-2.5 text-right">Aksi</th>
+            </tr>
+          </thead>
+          <tbody id="knowledge-table-body" class="divide-y divide-slate-100">
+            <tr>
+              <td colspan="6" class="px-4 py-6 text-center text-slate-400">Memuat basis pengetahuan...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- ======================================================== -->
+  <!-- TAB 4: MANAJEMEN STIKER WHATSAPP -->
+  <!-- ======================================================== -->
+  <main id="view-stickers" class="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6 space-y-6 hidden">
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+      <!-- Upload Stiker Baru -->
+      <div class="bg-white rounded-xl border border-slate-200 p-5 shadow-xs flex flex-col justify-between">
+        <div>
+          <h2 class="text-base font-bold text-slate-900 mb-1">Unggah Stiker WhatsApp</h2>
+          <p class="text-xs text-slate-500 mb-4">Unggah file stiker format <code>.webp</code>. AI akan memilih stiker berdasarkan tag emosi/nama file.</p>
+
+          <form id="form-upload-sticker" onsubmit="handleUploadSticker(event)" class="space-y-3 text-xs">
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">Tag Emosi / Nama Stiker</label>
+              <input type="text" id="input-sticker-tag" placeholder="Misal: ketawa, peluk, gemes, ngambek, capek" required class="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-slate-900 focus:outline-none focus:border-emerald-500">
+            </div>
+
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">Pilih File WebP</label>
+              <input type="file" id="input-sticker-file" required accept=".webp" class="w-full text-xs text-slate-600 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200">
+            </div>
+
+            <div class="pt-2">
+              <button type="submit" id="btn-submit-sticker" class="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg shadow-2xs cursor-pointer transition-colors">
+                Simpan Stiker ke Koleksi
+              </button>
+            </div>
+          </form>
+        </div>
+
+        <div class="mt-4 pt-3 border-t border-slate-100 text-[11px] text-slate-500">
+          Tip: AI memiliki akses tool <code>get_available_stickers</code> dan <code>send_sticker</code> untuk mengirim stiker yang relevan secara otomatis.
+        </div>
+      </div>
+
+      <!-- Koleksi Stiker Terdaftar -->
+      <div class="lg:col-span-2 bg-white rounded-xl border border-slate-200 p-5 shadow-xs">
+        <div class="flex items-center justify-between mb-4 border-b border-slate-200 pb-3">
+          <div>
+            <h2 class="text-base font-bold text-slate-900">Koleksi Stiker Aktif</h2>
+            <p class="text-xs text-slate-500">Daftar stiker lokal yang siap digunakan oleh agent AI.</p>
+          </div>
+          <span id="sticker-total-badge" class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200">0 Stiker</span>
+        </div>
+
+        <div id="stickers-gallery" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4 max-h-[460px] overflow-y-auto p-1">
+          <p class="text-xs text-slate-400 col-span-4 text-center py-8">Belum ada stiker di koleksi.</p>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+  <!-- ======================================================== -->
+  <!-- TAB 5: TRAINING ROOM & SIMULASI SANDBOX -->
+  <!-- ======================================================== -->
+  <main id="view-training" class="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6 space-y-6 hidden">
+    
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+      <!-- Kolom Kiri: Pengaturan Skenario Latihan -->
+      <div class="bg-white rounded-xl border border-slate-200 p-5 shadow-xs flex flex-col justify-between h-[640px]">
+        <div class="space-y-4">
+          <div>
+            <h2 class="text-base font-bold text-slate-900 mb-1">Skenario Latihan AI</h2>
+            <p class="text-xs text-slate-500">Pilih persona dan situasi yang ingin kamu simulasikan.</p>
+          </div>
+
+          <div class="space-y-3 text-xs">
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">Kategori Peran Lawan Bicara</label>
+              <select id="sim-select-category" class="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-slate-900 focus:outline-none focus:border-purple-500 font-medium">
+                <option value="pacar">Pacar (Hangat, manja, perhatian)</option>
+                <option value="teman_dekat">Teman Dekat (Santai, gaul, wkwk)</option>
+                <option value="formal">Formal (Dosen / Rekan Kerja)</option>
+                <option value="baru_kenal">Baru Kenal (Ramah, netral)</option>
+                <option value="default">Default</option>
+              </select>
+            </div>
+
+            <div>
+              <label class="block font-semibold text-slate-700 mb-1">Catatan Konteks / Skenario Spesifik</label>
+              <textarea id="sim-input-context" rows="3" placeholder="Misal: Lawan bicara lagi ngambek karena telat balas, atau dosen menanyakan progress tugas..." class="w-full bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-slate-900 focus:outline-none focus:border-purple-500"></textarea>
+            </div>
+          </div>
+
+          <!-- Indikator Tools yang Terlibat -->
+          <div class="bg-slate-50 p-3 rounded-lg border border-slate-200 text-xs">
+            <span class="font-bold text-slate-700 block mb-1">Tools Aktif di Sandbox:</span>
+            <div class="flex flex-wrap gap-1.5 text-[10px] text-slate-600 font-mono">
+              <span class="bg-white px-2 py-0.5 rounded border border-slate-200">get_current_time</span>
+              <span class="bg-white px-2 py-0.5 rounded border border-slate-200">get_weather</span>
+              <span class="bg-white px-2 py-0.5 rounded border border-slate-200">web_search</span>
+              <span class="bg-white px-2 py-0.5 rounded border border-slate-200">send_sticker</span>
+              <span class="bg-white px-2 py-0.5 rounded border border-slate-200">query_knowledge</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="pt-3 border-t border-slate-100 flex gap-2">
+          <button onclick="resetSimulation()" class="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg transition-colors cursor-pointer">
+            Mulai Ulang Sesi
+          </button>
+        </div>
+      </div>
+
+      <!-- Kolom Kanan: Simulator Chat & Panel Review -->
+      <div class="lg:col-span-2 space-y-4">
+
+        <!-- Kotak Percakapan Sandbox -->
+        <div class="bg-white rounded-xl border border-slate-200 p-4 shadow-xs flex flex-col h-[420px]">
+          <div class="border-b border-slate-200 pb-2.5 mb-2 flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <span class="w-2.5 h-2.5 rounded-full bg-purple-500 animate-pulse"></span>
+              <span class="text-xs font-bold text-slate-900">Sandbox Percakapan (Tidak Dikirim ke WhatsApp)</span>
+            </div>
+            <span id="sim-cat-badge" class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-purple-50 text-purple-700 border border-purple-200">Pacar</span>
+          </div>
+
+          <!-- Messages Stream -->
+          <div id="sim-messages-container" class="flex-1 overflow-y-auto space-y-3 p-3 bg-slate-50 rounded-lg border border-slate-200 mb-3">
+            <div class="text-center text-xs text-slate-400 py-10">
+              Ketik pesan di bawah untuk menguji respon persona AI dalam skenario ini.
+            </div>
+          </div>
+
+          <!-- Form Kirim Pesan Simulasi -->
+          <form onsubmit="handleSendSimulation(event)" class="space-y-2">
+            <div class="flex gap-2">
+              <input type="text" id="sim-input-message" placeholder="Ketik pesan simulasi seolah-olah kamu lawan bicaranya..." class="flex-1 bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-purple-500">
+              <button type="submit" id="sim-btn-send" class="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold rounded-lg shadow-2xs transition-colors cursor-pointer">
+                Uji AI
+              </button>
+            </div>
+            
+            <div class="flex items-center justify-between text-[11px] text-slate-500 pt-1">
+              <label class="flex items-center gap-1.5 cursor-pointer text-purple-700 hover:text-purple-900 font-semibold">
+                <span>📎 Uji Kirim Stiker (Vision)</span>
+                <input type="file" id="sim-file-sticker" accept=".webp" onchange="handleSimStickerUpload(event)" class="hidden">
+              </label>
+              <span id="sim-sticker-status" class="text-slate-400">Pilih berkas .webp untuk menguji kemampuan AI melihat stiker</span>
+            </div>
+          </form>
+        </div>
+
+        <!-- Panel Review & Penyerapan Pelajaran (Review Room) -->
+        <div id="sim-review-panel" class="bg-white rounded-xl border border-slate-200 p-4 shadow-xs space-y-3">
+          <div class="flex items-center justify-between border-b border-slate-100 pb-2">
+            <div>
+              <span class="text-xs font-bold uppercase tracking-wider text-slate-700">Review & Pelatihan Mandiri AI</span>
+              <p class="text-[11px] text-slate-400">Tulis balasan sempurnamu, lalu minta AI menginterpretasikan pelajaran dan menyerapnya ke Knowledge Base.</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <span id="sim-interpret-status" class="text-[10px] px-2 py-0.5 rounded-full font-medium bg-slate-100 text-slate-500 border border-slate-200">
+                Menunggu Sesi
+              </span>
+            </div>
+          </div>
+
+          <!-- Banner Refleksi Pemahaman AI -->
+          <div id="sim-analysis-banner" class="hidden p-3 rounded-lg bg-purple-50 border border-purple-200 text-xs text-purple-900 leading-relaxed shadow-2xs">
+            <span class="font-bold text-purple-950 block mb-0.5">🧠 Refleksi Pemahaman AI:</span>
+            <p id="sim-analysis-text">-</p>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+            <!-- Langkah 1: Jawaban Sempurna Kamu -->
+            <div class="space-y-1.5">
+              <div class="flex items-center justify-between">
+                <label class="font-bold text-slate-800">1. Balasan Sempurna Versi Kamu (Koreksi):</label>
+                <span class="text-[10px] text-emerald-600 font-mono">Gunakan '---' untuk multi-bubble</span>
+              </div>
+              <textarea id="sim-review-corrected" rows="4" placeholder="Tuliskan bagaimana kamu seharusnya membalas chat ini di dunia nyata..." class="w-full bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-slate-900 focus:outline-none focus:border-emerald-500 font-sans leading-relaxed"></textarea>
+              <div class="pt-1">
+                <button type="button" id="btn-do-interpret" onclick="handleInterpretFromPerfectReply()" class="w-full py-2 bg-purple-600 hover:bg-purple-700 text-white font-semibold rounded-lg shadow-2xs transition-all cursor-pointer flex items-center justify-center gap-1.5">
+                  <span>💡</span>
+                  <span>Interpretasi (Minta AI Pahami Jawaban Ini)</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Langkah 2: Pelajaran yang Dipetik AI untuk Knowledge Base -->
+            <div class="space-y-1.5">
+              <div class="flex items-center justify-between">
+                <label class="font-bold text-slate-800">2. Pelajaran / Fakta Baru untuk Knowledge Base:</label>
+                <span class="text-[10px] text-purple-600 font-mono">Bisa diedit bebas</span>
+              </div>
+              <textarea id="sim-review-knowledge" rows="4" placeholder="Setelah kamu klik tombol 'Interpretasi', AI akan merumuskan fakta atau aturan baru di sini berdasarkan jawaban sempurnamu. Kamu bisa mengeditnya..." class="w-full bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-slate-900 focus:outline-none focus:border-purple-500 leading-relaxed"></textarea>
+              <p class="text-[10px] text-slate-400">Pelajaran ini otomatis diekstrak oleh AI dari jawaban sempurnamu di sebelah kiri.</p>
+            </div>
+          </div>
+
+          <!-- Tindakan Simpan -->
+          <div class="flex flex-wrap items-center justify-end gap-2 pt-2 border-t border-slate-100">
+            <button onclick="approveToKnowledge()" class="px-3 py-1.5 rounded-lg bg-purple-50 hover:bg-purple-100 border border-purple-300 text-purple-700 text-xs font-semibold cursor-pointer transition-colors shadow-2xs">
+              + Serap ke Knowledge Base
+            </button>
+            <button onclick="approveToFewShot()" class="px-3 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-700 text-xs font-semibold cursor-pointer transition-colors shadow-2xs">
+              + Simpan Jadi Contoh Gaya (Few-Shot)
+            </button>
+            <button onclick="approveBoth()" class="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold cursor-pointer transition-colors shadow-2xs">
+              ✓ Simpan Keduanya Sekaligus
+            </button>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+
+  </main>
+
+  <!-- ======================================================== -->
+  <!-- MODAL EDIT / TAMBAH KATEGORI PERSONA -->
+  <!-- ======================================================== -->
+  <div id="modal-category" class="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 hidden">
+    <div class="bg-white border border-slate-200 rounded-xl max-w-lg w-full p-5 space-y-4 shadow-xl max-h-[90vh] overflow-y-auto">
+      <div class="flex justify-between items-center border-b border-slate-200 pb-2">
+        <h3 id="modal-category-title" class="text-sm font-bold text-slate-900">Edit Kategori Persona</h3>
+        <button onclick="closeModalCategory()" class="text-slate-400 hover:text-slate-700 text-lg leading-none cursor-pointer">&times;</button>
+      </div>
+
+      <form id="form-category" onsubmit="handleSaveCategory(event)" class="space-y-3 text-xs">
+        <div>
+          <label class="block font-semibold text-slate-700 mb-1">Key / ID Kategori (contoh: sahabat, rekan_kerja)</label>
+          <input type="text" id="input-cat-key" required placeholder="kategori_kustom" class="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-slate-900 focus:outline-none focus:border-emerald-500 font-mono">
+        </div>
+
+        <div>
+          <label class="block font-semibold text-slate-700 mb-1">Nada Bicara / Sikap (Tone)</label>
+          <input type="text" id="input-cat-tone" required placeholder="Santai, penuh perhatian, to the point" class="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-slate-900 focus:outline-none focus:border-emerald-500">
+        </div>
+
+        <div>
+          <label class="block font-semibold text-slate-700 mb-1">Kosakata / Panggilan Khas (Pisahkan dengan koma)</label>
+          <input type="text" id="input-cat-vocab" placeholder="bro, lu, gua, siap, aman" class="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-slate-900 focus:outline-none focus:border-emerald-500">
+        </div>
+
+        <div>
+          <label class="block font-semibold text-slate-700 mb-1">Panduan Perilaku (Guidelines)</label>
+          <textarea id="input-cat-guidelines" rows="2" placeholder="Jangan gunakan kata formal, balas dengan cepat..." class="w-full bg-slate-50 border border-slate-300 rounded-lg p-3 text-slate-900 focus:outline-none focus:border-emerald-500"></textarea>
+        </div>
+
+        <!-- Few Shots Editor (JSON format sederhana untuk kemudahan) -->
+        <div>
+          <label class="block font-semibold text-slate-700 mb-1">Contoh Percakapan Nyata (Few-Shot Pairs JSON)</label>
+          <textarea id="input-cat-fewshots" rows="4" placeholder='[{"user": "halo", "reply": "iya knp?"}]' class="w-full bg-slate-50 border border-slate-300 rounded-lg p-3 text-slate-900 font-mono focus:outline-none focus:border-emerald-500"></textarea>
+        </div>
+
+        <div class="pt-3 border-t border-slate-200 flex justify-end gap-2">
+          <button type="button" onclick="closeModalCategory()" class="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium">Batal</button>
+          <button type="submit" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-2xs">Simpan Kategori</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal Konfigurasi LLM Universal -->
+  <div id="modal-llm" class="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 hidden">
+    <div class="bg-white border border-slate-200 rounded-xl max-w-md w-full p-5 space-y-4 shadow-xl">
+      <div class="flex justify-between items-center border-b border-slate-200 pb-2">
+        <h3 class="text-sm font-bold text-slate-900">Konfigurasi Model LLM</h3>
+        <button onclick="closeModalLLM()" class="text-slate-400 hover:text-slate-700 text-lg leading-none cursor-pointer">&times;</button>
+      </div>
+
+      <form id="form-llm" onsubmit="handleSaveLLM(event)" class="space-y-3 text-xs">
+        <div>
+          <label class="block text-slate-600 font-semibold mb-1">Base URL Endpoint</label>
+          <input type="text" id="input-llm-baseurl" required placeholder="https://..." class="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-slate-900 focus:outline-none focus:border-emerald-500 font-mono">
+        </div>
+
+        <div>
+          <label class="block text-slate-600 font-semibold mb-1">Nama Model Chat (Utama)</label>
+          <input type="text" id="input-llm-model" required placeholder="gemma4, gpt-4o-mini, dll" class="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-slate-900 focus:outline-none focus:border-emerald-500 font-mono">
+        </div>
+
+        <div>
+          <label class="block text-slate-600 font-semibold mb-1">Nama Model Khusus Vision (Opsional)</label>
+          <input type="text" id="input-llm-vision-model" placeholder="Kosongkan jika menggunakan model yang sama" class="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-slate-900 focus:outline-none focus:border-emerald-500 font-mono">
+          <p class="text-[11px] text-slate-400 mt-0.5">Jika model chat kamu text-only, isi ini dengan model vision (misal: qwen2.5-vl, llava, gpt-4o-mini).</p>
+        </div>
+
+        <div>
+          <label class="block text-slate-600 font-semibold mb-1">API Key</label>
+          <input type="password" id="input-llm-apikey" placeholder="Kosongkan jika endpoint lokal" class="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-slate-900 focus:outline-none focus:border-emerald-500 font-mono">
+        </div>
+
+        <div class="pt-3 border-t border-slate-200 flex justify-end gap-2">
+          <button type="button" onclick="closeModalLLM()" class="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium">Batal</button>
+          <button type="submit" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-2xs">Simpan</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal Tambah / Edit Kontak -->
+  <div id="modal-contact" class="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 hidden">
+    <div class="bg-white border border-slate-200 rounded-xl max-w-md w-full p-5 space-y-4 shadow-xl">
+      <div class="flex justify-between items-center border-b border-slate-200 pb-2">
+        <h3 id="modal-title" class="text-sm font-bold text-slate-900">Tambah Kontak Baru</h3>
+        <button onclick="closeModal()" class="text-slate-400 hover:text-slate-700 text-lg leading-none cursor-pointer">&times;</button>
+      </div>
+
+      <form id="form-contact" onsubmit="handleSaveContact(event)" class="space-y-3 text-xs">
+        <input type="hidden" id="input-old-phone" value="">
+
+        <div>
+          <label class="block text-slate-600 font-semibold mb-1">Nomor WhatsApp</label>
+          <input type="text" id="input-phone" required placeholder="628xxxxxxxxxx" class="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-slate-900 focus:outline-none focus:border-emerald-500 font-mono">
+        </div>
+
+        <div>
+          <label class="block text-slate-600 font-semibold mb-1">Nama Kontak</label>
+          <input type="text" id="input-name" required placeholder="Nama atau panggilan" class="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-slate-900 focus:outline-none focus:border-emerald-500">
+        </div>
+
+        <div>
+          <label class="block text-slate-600 font-semibold mb-1">Kategori Relasi</label>
+          <select id="select-category" class="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-slate-900 focus:outline-none focus:border-emerald-500">
+            <!-- Render dinamis dari kategori persona yang ada -->
+          </select>
+        </div>
+
+        <div>
+          <label class="block text-slate-600 font-semibold mb-1">Catatan Khusus Persona (Opsional)</label>
+          <textarea id="input-notes" rows="2" placeholder="Petunjuk khusus kepribadian saat chat..." class="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-slate-900 focus:outline-none focus:border-emerald-500"></textarea>
+        </div>
+
+        <div class="flex items-center gap-2 pt-1">
+          <input type="checkbox" id="check-enabled" checked class="rounded border-slate-300 text-emerald-600 focus:ring-0">
+          <label for="check-enabled" class="text-slate-700 font-medium">Izinkan AI otomatis membalas nomor ini</label>
+        </div>
+
+        <div class="pt-3 border-t border-slate-200 flex justify-end gap-2">
+          <button type="button" onclick="closeModal()" class="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium">Batal</button>
+          <button type="submit" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-2xs">Simpan</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- SCRIPT LOGIKA UTAMA -->
+  <script>
+    let currentContacts = {};
+    let currentLLMConfig = {};
+    let currentPersona = { general_persona: {}, categories: {} };
+    let currentKnowledge = [];
+    let selectedChatPhone = null;
+
+    // Tab Switcher
+    function switchTab(tabId) {
+      const tabs = ['dashboard', 'persona', 'knowledge', 'stickers', 'training'];
+      tabs.forEach(t => {
+        const view = document.getElementById(`view-${t}`);
+        const btn = document.getElementById(`tab-btn-${t}`);
+        if (t === tabId) {
+          view.classList.remove('hidden');
+          btn.className = 'px-3 py-1.5 rounded-md transition-all cursor-pointer bg-white text-slate-900 shadow-2xs';
+        } else {
+          view.classList.add('hidden');
+          btn.className = 'px-3 py-1.5 rounded-md transition-all cursor-pointer text-slate-600 hover:text-slate-900';
+        }
+      });
+
+      if (tabId === 'persona') loadPersonaData();
+      if (tabId === 'knowledge') loadKnowledgeData();
+      if (tabId === 'stickers') loadStickersData();
+      if (tabId === 'training') initTrainingRoom();
+    }
+
+    async function fetchStatus() {
+      try {
+        const res = await fetch('/api/status');
+        const data = await res.json();
+        currentLLMConfig = data.llm || {};
+
+        // Master Service Button
+        const isSvcOn = data.settings.serviceEnabled !== false;
+        const svcBtn = document.getElementById('btn-toggle-service');
+        const svcDot = document.getElementById('service-dot');
+        const svcText = document.getElementById('service-text');
+        if (isSvcOn) {
+          svcBtn.className = 'flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all duration-150 shadow-2xs cursor-pointer bg-emerald-50 border-emerald-300 text-emerald-700 hover:bg-emerald-100';
+          svcDot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-500';
+          svcText.textContent = 'Service: ON';
+        } else {
+          svcBtn.className = 'flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all duration-150 shadow-2xs cursor-pointer bg-rose-50 border-rose-300 text-rose-700 hover:bg-rose-100';
+          svcDot.className = 'w-2.5 h-2.5 rounded-full bg-rose-500';
+          svcText.textContent = 'Service: OFF';
+        }
+
+        // WhatsApp Pill
+        const waPill = document.getElementById('wa-pill');
+        const waDesc = document.getElementById('wa-text-desc');
+        const qrWrapper = document.getElementById('qr-wrapper');
+
+        if (data.whatsapp.status === 'connected') {
+          waPill.className = 'px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-300';
+          waPill.textContent = 'Terhubung';
+          waDesc.textContent = 'WhatsApp aktif dan siap melayani percakapan.';
+          qrWrapper.classList.add('hidden');
+        } else if (data.whatsapp.status === 'qr_ready') {
+          waPill.className = 'px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-300';
+          waPill.textContent = 'Perlu Scan';
+          waDesc.textContent = 'Silakan scan QR code di bawah ini.';
+          if (data.whatsapp.qr) {
+            qrWrapper.classList.remove('hidden');
+            const qrEl = document.getElementById('qrcode');
+            qrEl.innerHTML = '';
+            new QRCode(qrEl, { text: data.whatsapp.qr, width: 96, height: 96 });
+          }
+        } else {
+          waPill.className = 'px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-50 text-rose-700 border border-rose-300';
+          waPill.textContent = 'Terputus';
+          waDesc.textContent = 'Mencoba menghubungkan kembali...';
+          qrWrapper.classList.add('hidden');
+        }
+
+        // LLM Status
+        const llmPill = document.getElementById('llm-pill');
+        document.getElementById('llm-model-name').textContent = data.llm.model || '-';
+        document.getElementById('llm-base-url').textContent = data.llm.baseUrl || '-';
+        if (data.llm.connected) {
+          llmPill.className = 'px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-300';
+          llmPill.textContent = 'Online';
+        } else {
+          llmPill.className = 'px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-50 text-rose-700 border border-rose-300';
+          llmPill.textContent = 'Offline';
+        }
+
+        updateKnob('whitelist-knob', 'btn-toggle-whitelist', data.settings.whitelistOnly);
+        updateKnob('groups-knob', 'btn-toggle-groups', data.settings.replyGroups);
+        document.getElementById('contact-count-text').textContent = `${data.settings.totalContacts} Kontak`;
+
+      } catch (err) {
+        console.error('Error status:', err);
+      }
+    }
+
+    async function toggleMasterService() {
+      try {
+        await fetch('/api/settings/toggle-service', { method: 'POST' });
+        fetchStatus();
+      } catch {
+        alert('Gagal toggle service');
+      }
+    }
+
+    function updateKnob(knobId, btnId, active) {
+      const knob = document.getElementById(knobId);
+      const btn = document.getElementById(btnId);
+      if (active) {
+        btn.classList.remove('bg-slate-300');
+        btn.classList.add('bg-emerald-600');
+        knob.classList.remove('translate-x-0.5');
+        knob.classList.add('translate-x-4');
+      } else {
+        btn.classList.remove('bg-emerald-600');
+        btn.classList.add('bg-slate-300');
+        knob.classList.remove('translate-x-4');
+        knob.classList.add('translate-x-0.5');
+      }
+    }
+
+    function formatCategoryName(key) {
+      const map = {
+        pacar: 'Pacar',
+        teman_dekat: 'Teman Dekat',
+        formal: 'Formal',
+        baru_kenal: 'Baru Kenal',
+        default: 'Default'
+      };
+      if (map[key]) return map[key];
+      return key ? key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, ' ') : 'Default';
+    }
+
+    async function loadContacts() {
+      try {
+        const res = await fetch('/api/contacts');
+        const data = await res.json();
+        currentContacts = data.contacts || {};
+
+        const tbody = document.getElementById('contacts-table-body');
+        const phones = Object.keys(currentContacts);
+
+        if (phones.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="6" class="px-4 py-6 text-center text-slate-400">Belum ada kontak terdaftar.</td></tr>`;
+          return;
+        }
+
+        tbody.innerHTML = phones.map(phone => {
+          const c = currentContacts[phone];
+          const isEnabled = c.enabled !== false;
+          const displayCategory = formatCategoryName(c.category);
+
+          return `
+            <tr class="hover:bg-slate-50 transition-colors">
+              <td class="px-4 py-2.5 font-semibold text-slate-900">${c.name || '-'}</td>
+              <td class="px-4 py-2.5 font-mono text-slate-600">${phone}</td>
+              <td class="px-4 py-2.5">
+                <span class="px-2 py-0.5 rounded-full text-[11px] font-medium border bg-slate-100 text-slate-700 border-slate-200">
+                  ${displayCategory}
+                </span>
+              </td>
+              <td class="px-4 py-2.5 text-slate-500 truncate max-w-xs">${c.notes || '-'}</td>
+              <td class="px-4 py-2.5 text-center">
+                <button onclick="toggleContact('${phone}')" class="px-2.5 py-0.5 rounded-full text-[11px] font-semibold border transition-all cursor-pointer ${isEnabled ? 'bg-emerald-50 text-emerald-700 border-emerald-300' : 'bg-slate-100 text-slate-500 border-slate-300'}">
+                  ${isEnabled ? 'Aktif' : 'Nonaktif'}
+                </button>
+              </td>
+              <td class="px-4 py-2.5 text-right space-x-2">
+                <button onclick="inspectChat('${phone}', '${c.name ? c.name.replace(/'/g, "\\'") : phone}', '${c.category}')" class="text-emerald-700 hover:text-emerald-900 font-semibold cursor-pointer">Lihat Chat</button>
+                <button onclick="editContact('${phone}')" class="text-blue-600 hover:text-blue-800 font-medium cursor-pointer">Edit</button>
+                <button onclick="deleteContact('${phone}')" class="text-rose-600 hover:text-rose-800 font-medium cursor-pointer">Hapus</button>
+              </td>
+            </tr>
+          `;
+        }).join('');
+
+      } catch (err) {
+        console.error('Error load contacts:', err);
+      }
+    }
+
+    async function loadConversations() {
+      try {
+        const res = await fetch('/api/conversations');
+        const data = await res.json();
+        const convList = data.conversations || [];
+        const box = document.getElementById('conversations-list');
+        const activeConvs = convList.filter(c => c.messageCount > 0);
+        document.getElementById('active-chats-count').textContent = `${activeConvs.length} Percakapan`;
+
+        if (activeConvs.length === 0) {
+          box.innerHTML = `<p class="text-xs text-slate-400 p-4 text-center">Belum ada percakapan masuk.</p>`;
+          return;
+        }
+
+        box.innerHTML = activeConvs.map(c => {
+          const isSelected = selectedChatPhone === c.phone;
+          const lastText = c.lastMessage ? (c.lastMessage.role === 'assistant' ? `Another Me: ${c.lastMessage.content}` : c.lastMessage.content) : 'Belum ada obrolan';
+          const time = c.lastMessage?.timestamp ? new Date(c.lastMessage.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) : '';
+
+          return `
+            <div onclick="inspectChat('${c.phone}', '${c.name.replace(/'/g, "\\'")}', '${c.category}')" class="p-2.5 rounded-lg border transition-all cursor-pointer ${isSelected ? 'bg-emerald-50/70 border-emerald-300' : 'bg-slate-50 border-slate-200 hover:bg-slate-100'}">
+              <div class="flex items-center justify-between mb-1">
+                <span class="text-xs font-bold text-slate-900 truncate">${c.name}</span>
+                <span class="text-[10px] text-slate-400 shrink-0 ml-1">${time}</span>
+              </div>
+              <p class="text-[11px] text-slate-600 truncate">${lastText}</p>
+            </div>
+          `;
+        }).join('');
+
+      } catch (err) {
+        console.error('Error load convs:', err);
+      }
+    }
+
+    async function inspectChat(phone, name, category = null) {
+      selectedChatPhone = phone;
+      document.getElementById('chat-header-name').textContent = `${name} (${phone})`;
+      document.getElementById('chat-header-meta').textContent = `Riwayat pesan terbaru dan balasan yang dikirim AI.`;
+
+      const badge = document.getElementById('chat-header-badge');
+      if (category) {
+        badge.textContent = formatCategoryName(category);
+        badge.className = 'px-2.5 py-0.5 rounded-full text-[11px] font-medium border bg-slate-100 text-slate-700 border-slate-200 block';
+      }
+
+      // Tampilkan tombol Hapus History saat kontak dipilih
+      const clearBtn = document.getElementById('btn-clear-chat');
+      if (clearBtn) {
+        clearBtn.classList.remove('hidden');
+      }
+
+      loadConversations();
+
+      try {
+        const res = await fetch(`/api/history/${phone}`);
+        const data = await res.json();
+        const history = data.history || [];
+        const box = document.getElementById('chat-messages-container');
+
+        if (history.length === 0) {
+          box.innerHTML = `<div class="h-full flex items-center justify-center text-xs text-slate-400">Belum ada pertukaran pesan dengan nomor ini.</div>`;
+          return;
+        }
+
+        box.innerHTML = history.map(msg => {
+          const isAI = msg.role === 'assistant';
+          const align = isAI ? 'justify-end' : 'justify-start';
+          const bubble = isAI
+            ? 'bg-emerald-600 text-white rounded-t-xl rounded-bl-xl shadow-2xs'
+            : 'bg-white text-slate-800 border border-slate-200 rounded-t-xl rounded-br-xl shadow-2xs';
+          
+          let senderLabel = isAI ? 'Another Me (AI)' : (msg.meta?.senderName || name);
+          if (!isAI && msg.meta?.pushName && msg.meta.pushName !== senderLabel) {
+            senderLabel += ` (~${msg.meta.pushName})`;
+          }
+
+          const time = msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) : '';
+
+          return `
+            <div class="flex ${align}">
+              <div class="max-w-[75%] space-y-1">
+                <span class="text-[10px] text-slate-400 block ${isAI ? 'text-right' : 'text-left'}">${senderLabel} ${time ? '• ' + time : ''}</span>
+                <div class="p-2.5 text-xs ${bubble}">
+                  <p class="leading-relaxed whitespace-pre-wrap">${msg.content}</p>
+                </div>
+              </div>
+            </div>
+          `;
+        }).join('');
+
+        box.scrollTop = box.scrollHeight;
+
+      } catch (err) {
+        console.error('Error inspect chat:', err);
+      }
+    }
+
+    // ==========================================
+    // PERSONA MANAGEMENT LOGIC
+    // ==========================================
+    async function loadPersonaData() {
+      try {
+        const res = await fetch('/api/persona');
+        currentPersona = await res.json();
+
+        // Isi form umum
+        document.getElementById('input-general-identity').value = currentPersona.general_persona?.identity || '';
+        document.getElementById('input-general-rules').value = (currentPersona.general_persona?.core_typing_rules || []).join('\n');
+
+        // Isi grid kategori
+        const grid = document.getElementById('persona-categories-grid');
+        const categories = currentPersona.categories || {};
+        const catKeys = Object.keys(categories);
+
+        if (catKeys.length === 0) {
+          grid.innerHTML = `<p class="text-xs text-slate-400 col-span-3 text-center py-6">Belum ada kategori persona.</p>`;
+          return;
+        }
+
+        grid.innerHTML = catKeys.map(key => {
+          const item = categories[key];
+          const vocab = (item.vocabulary || []).join(', ');
+          const fewShotsCount = (item.few_shots || []).length;
+          const title = formatCategoryName(key);
+
+          return `
+            <div class="bg-slate-50 border border-slate-200 rounded-xl p-4 flex flex-col justify-between shadow-2xs">
+              <div>
+                <div class="flex items-center justify-between mb-2">
+                  <span class="text-xs font-bold text-slate-900">${title}</span>
+                  <span class="text-[10px] font-mono text-slate-500 bg-white px-2 py-0.5 rounded border border-slate-200">${key}</span>
+                </div>
+                <p class="text-xs text-slate-700 font-medium mb-1">${item.tone || '-'}</p>
+                <p class="text-[11px] text-slate-500 mb-2 truncate">Panggilan: ${vocab || '-'}</p>
+                <div class="text-[11px] text-slate-600 bg-white p-2 rounded border border-slate-200 mb-2 line-clamp-2">
+                  ${item.guidelines || '-'}
+                </div>
+              </div>
+              <div class="pt-2 border-t border-slate-200 flex items-center justify-between text-xs">
+                <span class="text-slate-500 text-[11px]">${fewShotsCount} Contoh Obrolan</span>
+                <div class="space-x-2">
+                  <button onclick="editCategoryPersona('${key}')" class="text-blue-600 hover:text-blue-800 font-semibold cursor-pointer">Edit</button>
+                  <button onclick="deleteCategoryPersona('${key}')" class="text-rose-600 hover:text-rose-800 font-medium cursor-pointer">Hapus</button>
+                </div>
+              </div>
+            </div>
+          `;
+        }).join('');
+
+        // Update dropdown kategori di modal kontak
+        updateCategoryDropdowns();
+
+      } catch (err) {
+        console.error('Error load persona:', err);
+      }
+    }
+
+    function updateCategoryDropdowns() {
+      const select = document.getElementById('select-category');
+      const cats = Object.keys(currentPersona.categories || {});
+      select.innerHTML = cats.map(k => `<option value="${k}">${formatCategoryName(k)}</option>`).join('');
+    }
+
+    async function saveGeneralPersona() {
+      const identity = document.getElementById('input-general-identity').value.trim();
+      const rules = document.getElementById('input-general-rules').value;
+
+      try {
+        await fetch('/api/persona/general', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ identity, core_typing_rules: rules })
+        });
+        alert('Aturan gaya pengetikan umum berhasil disimpan.');
+        loadPersonaData();
+      } catch {
+        alert('Gagal menyimpan aturan persona umum');
+      }
+    }
+
+    function openModalCategory() {
+      document.getElementById('modal-category-title').textContent = 'Tambah Kategori Persona Baru';
+      document.getElementById('input-cat-key').value = '';
+      document.getElementById('input-cat-key').removeAttribute('readonly');
+      document.getElementById('input-cat-tone').value = '';
+      document.getElementById('input-cat-vocab').value = '';
+      document.getElementById('input-cat-guidelines').value = '';
+      document.getElementById('input-cat-fewshots').value = '[]';
+      document.getElementById('modal-category').classList.remove('hidden');
+    }
+
+    function editCategoryPersona(key) {
+      const cat = currentPersona.categories?.[key];
+      if (!cat) return;
+      document.getElementById('modal-category-title').textContent = `Edit Kategori: ${formatCategoryName(key)}`;
+      document.getElementById('input-cat-key').value = key;
+      document.getElementById('input-cat-key').setAttribute('readonly', 'true');
+      document.getElementById('input-cat-tone').value = cat.tone || '';
+      document.getElementById('input-cat-vocab').value = (cat.vocabulary || []).join(', ');
+      document.getElementById('input-cat-guidelines').value = cat.guidelines || '';
+      document.getElementById('input-cat-fewshots').value = JSON.stringify(cat.few_shots || [], null, 2);
+      document.getElementById('modal-category').classList.remove('hidden');
+    }
+
+    function closeModalCategory() {
+      document.getElementById('modal-category').classList.add('hidden');
+    }
+
+    async function handleSaveCategory(e) {
+      e.preventDefault();
+      const categoryKey = document.getElementById('input-cat-key').value.trim().toLowerCase().replace(/\s+/g, '_');
+      const tone = document.getElementById('input-cat-tone').value.trim();
+      const vocabulary = document.getElementById('input-cat-vocab').value.trim();
+      const guidelines = document.getElementById('input-cat-guidelines').value.trim();
+      let few_shots = [];
+
+      try {
+        few_shots = JSON.parse(document.getElementById('input-cat-fewshots').value);
+      } catch {
+        alert('Format Few-Shot Pairs JSON tidak valid!');
+        return;
+      }
+
+      try {
+        await fetch('/api/persona/category', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ categoryKey, tone, vocabulary, guidelines, few_shots })
+        });
+        closeModalCategory();
+        loadPersonaData();
+      } catch {
+        alert('Gagal menyimpan kategori persona');
+      }
+    }
+
+    async function deleteCategoryPersona(key) {
+      if (!confirm(`Hapus kategori persona '${key}'?`)) return;
+      try {
+        await fetch(`/api/persona/category/${key}`, { method: 'DELETE' });
+        loadPersonaData();
+      } catch {
+        alert('Gagal menghapus kategori');
+      }
+    }
+
+    // ==========================================
+    // KNOWLEDGE BASE LOGIC
+    // ==========================================
+    async function loadKnowledgeData() {
+      try {
+        const res = await fetch('/api/knowledge');
+        const data = await res.json();
+        currentKnowledge = data.documents || [];
+
+        const tbody = document.getElementById('knowledge-table-body');
+        if (currentKnowledge.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="6" class="px-4 py-6 text-center text-slate-400">Belum ada dokumen atau catatan pengetahuan.</td></tr>`;
+          return;
+        }
+
+        tbody.innerHTML = currentKnowledge.map(doc => {
+          const isEnabled = doc.enabled !== false;
+          return `
+            <tr class="hover:bg-slate-50 transition-colors">
+              <td class="px-4 py-2.5 font-semibold text-slate-900">${doc.title}</td>
+              <td class="px-4 py-2.5 font-mono text-slate-600">${doc.fileType}</td>
+              <td class="px-4 py-2.5">
+                <span class="px-2 py-0.5 rounded-full text-[11px] font-medium border bg-slate-100 text-slate-700 border-slate-200">
+                  ${doc.category === 'all' ? 'Universal' : formatCategoryName(doc.category)}
+                </span>
+              </td>
+              <td class="px-4 py-2.5 text-slate-500">${doc.charCount.toLocaleString('id-ID')} karakter</td>
+              <td class="px-4 py-2.5 text-center">
+                <button onclick="toggleKnowledge('${doc.id}')" class="px-2.5 py-0.5 rounded-full text-[11px] font-semibold border transition-all cursor-pointer ${isEnabled ? 'bg-emerald-50 text-emerald-700 border-emerald-300' : 'bg-slate-100 text-slate-500 border-slate-300'}">
+                  ${isEnabled ? 'Aktif' : 'Nonaktif'}
+                </button>
+              </td>
+              <td class="px-4 py-2.5 text-right">
+                <button onclick="deleteKnowledge('${doc.id}')" class="text-rose-600 hover:text-rose-800 font-medium cursor-pointer">Hapus</button>
+              </td>
+            </tr>
+          `;
+        }).join('');
+
+      } catch (err) {
+        console.error('Error load knowledge:', err);
+      }
+    }
+
+    async function handleUploadKnowledge(e) {
+      e.preventDefault();
+      const fileInput = document.getElementById('input-doc-file');
+      const title = document.getElementById('input-doc-title').value.trim();
+      const category = document.getElementById('select-doc-category').value;
+      const btn = document.getElementById('btn-submit-upload');
+
+      if (!fileInput.files || fileInput.files.length === 0) return;
+
+      const formData = new FormData();
+      formData.append('file', fileInput.files[0]);
+      formData.append('title', title);
+      formData.append('category', category);
+
+      btn.disabled = true;
+      btn.textContent = 'Mengekstrak teks dokumen...';
+
+      try {
+        const res = await fetch('/api/knowledge/upload', {
+          method: 'POST',
+          body: formData
+        });
+        const data = await res.json();
+        if (data.success) {
+          alert('Dokumen berhasil diekstrak dan disimpan ke basis pengetahuan.');
+          fileInput.value = '';
+          document.getElementById('input-doc-title').value = '';
+          loadKnowledgeData();
+        } else {
+          alert(`Gagal: ${data.error}`);
+        }
+      } catch (err) {
+        alert('Gagal mengunggah dokumen: ' + err.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Ekstrak & Simpan Dokumen';
+      }
+    }
+
+    async function handleSaveSnippet(e) {
+      e.preventDefault();
+      const title = document.getElementById('input-snippet-title').value.trim();
+      const content = document.getElementById('input-snippet-content').value.trim();
+      const category = document.getElementById('select-snippet-category').value;
+
+      try {
+        const res = await fetch('/api/knowledge/snippet', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title, content, category })
+        });
+        const data = await res.json();
+        if (data.success) {
+          alert('Catatan pengetahuan berhasil disimpan.');
+          document.getElementById('input-snippet-title').value = '';
+          document.getElementById('input-snippet-content').value = '';
+          loadKnowledgeData();
+        } else {
+          alert(`Gagal: ${data.error}`);
+        }
+      } catch (err) {
+        alert('Gagal menyimpan snippet: ' + err.message);
+      }
+    }
+
+    async function toggleKnowledge(id) {
+      try {
+        await fetch(`/api/knowledge/${id}/toggle`, { method: 'POST' });
+        loadKnowledgeData();
+      } catch {
+        alert('Gagal toggle knowledge');
+      }
+    }
+
+    async function deleteKnowledge(id) {
+      if (!confirm('Hapus dokumen pengetahuan ini?')) return;
+      try {
+        await fetch(`/api/knowledge/${id}`, { method: 'DELETE' });
+        loadKnowledgeData();
+      } catch {
+        alert('Gagal menghapus knowledge');
+      }
+    }
+
+    // ==========================================
+    // STICKERS MANAGEMENT LOGIC
+    // ==========================================
+    async function loadStickersData() {
+      try {
+        const res = await fetch('/api/stickers');
+        const data = await res.json();
+        const stickers = data.stickers || [];
+        document.getElementById('sticker-total-badge').textContent = `${stickers.length} Stiker`;
+
+        const gallery = document.getElementById('stickers-gallery');
+        if (stickers.length === 0) {
+          gallery.innerHTML = `<p class="text-xs text-slate-400 col-span-4 text-center py-8">Belum ada stiker di koleksi. Unggah file .webp di sebelah kiri.</p>`;
+          return;
+        }
+
+        gallery.innerHTML = stickers.map(s => {
+          return `
+            <div class="bg-slate-50 border border-slate-200 rounded-xl p-3 flex flex-col items-center justify-between text-center shadow-2xs group relative">
+              <div class="w-20 h-20 flex items-center justify-center p-1 bg-white rounded-lg border border-slate-200 mb-2">
+                <img src="/stickers/${encodeURIComponent(s.fileName)}" alt="${s.tag}" class="max-w-full max-h-full object-contain" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22><text y=%2218%22 font-size=%2218%22>🖼️</text></svg>'">
+              </div>
+              <span class="text-xs font-bold text-slate-800 truncate w-full mb-1">${s.tag}</span>
+              <button onclick="deleteSticker('${encodeURIComponent(s.fileName)}')" class="text-[11px] text-rose-600 hover:text-rose-800 font-medium underline cursor-pointer">
+                Hapus
+              </button>
+            </div>
+          `;
+        }).join('');
+
+      } catch (err) {
+        console.error('Error load stickers:', err);
+      }
+    }
+
+    async function handleUploadSticker(e) {
+      e.preventDefault();
+      const fileInput = document.getElementById('input-sticker-file');
+      const tag = document.getElementById('input-sticker-tag').value.trim();
+      const btn = document.getElementById('btn-submit-sticker');
+
+      if (!fileInput.files || fileInput.files.length === 0) return;
+
+      const formData = new FormData();
+      formData.append('sticker', fileInput.files[0]);
+      formData.append('tag', tag);
+
+      btn.disabled = true;
+      btn.textContent = 'Mengunggah stiker...';
+
+      try {
+        const res = await fetch('/api/stickers/upload', {
+          method: 'POST',
+          body: formData
+        });
+        const data = await res.json();
+        if (data.success) {
+          fileInput.value = '';
+          document.getElementById('input-sticker-tag').value = '';
+          loadStickersData();
+          fetchStatus();
+        } else {
+          alert('Gagal: ' + data.error);
+        }
+      } catch (err) {
+        alert('Gagal unggah stiker: ' + err.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Simpan Stiker ke Koleksi';
+      }
+    }
+
+    async function deleteSticker(fileName) {
+      if (!confirm('Hapus stiker ini dari koleksi?')) return;
+      try {
+        await fetch(`/api/stickers/${fileName}`, { method: 'DELETE' });
+        loadStickersData();
+        fetchStatus();
+      } catch {
+        alert('Gagal menghapus stiker');
+      }
+    }
+
+    // ==========================================
+    // TRAINING ROOM & SIMULATION LOGIC
+    // ==========================================
+    let simHistory = [];
+    let lastSimUserMessage = '';
+    let lastSimAIMessage = '';
+
+    function initTrainingRoom() {
+      const select = document.getElementById('sim-select-category');
+      const cats = Object.keys(currentPersona.categories || {});
+      if (cats.length > 0) {
+        select.innerHTML = cats.map(k => `<option value="${k}">${formatCategoryName(k)}</option>`).join('');
+      }
+      updateSimCategoryBadge();
+    }
+
+    document.getElementById('sim-select-category').addEventListener('change', updateSimCategoryBadge);
+
+    function updateSimCategoryBadge() {
+      const val = document.getElementById('sim-select-category').value;
+      document.getElementById('sim-cat-badge').textContent = formatCategoryName(val);
+    }
+
+    function resetSimulation() {
+      simHistory = [];
+      lastSimUserMessage = '';
+      lastSimAIMessage = '';
+      document.getElementById('sim-messages-container').innerHTML = `
+        <div class="text-center text-xs text-slate-400 py-10">
+          Sesi baru dimulai. Ketik pesan di bawah untuk menguji respon persona AI dalam skenario ini.
+        </div>
+      `;
+      document.getElementById('sim-review-corrected').value = '';
+      document.getElementById('sim-review-knowledge').value = '';
+    }
+
+    async function handleSendSimulation(e) {
+      e.preventDefault();
+      const input = document.getElementById('sim-input-message');
+      const btn = document.getElementById('sim-btn-send');
+      const msg = input.value.trim();
+      if (!msg) return;
+
+      const category = document.getElementById('sim-select-category').value;
+      const customContext = document.getElementById('sim-input-context').value.trim();
+
+      lastSimUserMessage = msg;
+      input.value = '';
+      btn.disabled = true;
+      btn.textContent = 'Memproses...';
+
+      const container = document.getElementById('sim-messages-container');
+      if (simHistory.length === 0) container.innerHTML = '';
+
+      // Tampilkan bubble user di sandbox
+      const now = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+      container.innerHTML += `
+        <div class="flex justify-start">
+          <div class="max-w-[75%] space-y-1">
+            <span class="text-[10px] text-slate-400 block text-left">Kamu (Sebagai Lawan Bicara) • ${now}</span>
+            <div class="p-2.5 text-xs bg-white text-slate-800 border border-slate-200 rounded-t-xl rounded-br-xl shadow-2xs">
+              <p class="leading-relaxed whitespace-pre-wrap">${msg}</p>
+            </div>
+          </div>
+        </div>
+      `;
+      container.scrollTop = container.scrollHeight;
+
+      try {
+        const res = await fetch('/api/simulation/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: msg,
+            category,
+            customContext,
+            history: simHistory
+          })
+        });
+
+        const data = await res.json();
+        if (data.success) {
+          lastSimAIMessage = data.replyText;
+          const bubbles = data.replyBubbles || [data.replyText];
+          for (let b of bubbles) {
+            simHistory.push({ role: 'assistant', content: b });
+          }
+
+          // Tampilkan badge tool call jika ada
+          let toolNote = '';
+          if (data.toolCallsLog && data.toolCallsLog.length > 0) {
+            const toolNames = data.toolCallsLog.map(t => t.name).join(', ');
+            toolNote = `<span class="inline-block text-[10px] font-mono text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-200 mb-1">🔧 Tool: ${toolNames}</span>`;
+          }
+
+          // Tampilkan sticker jika action send_sticker terpicu
+          let stickerNote = '';
+          if (data.actions && data.actions.length > 0) {
+            for (const act of data.actions) {
+              if (act.type === 'send_sticker') {
+                stickerNote += `<div class="mt-1 text-[11px] text-emerald-600 font-semibold flex items-center gap-1">🖼️ [Mengirim Stiker: ${act.tag}]</div>`;
+              }
+            }
+          }
+
+          // Render setiap balon chat secara terpisah
+          let bubblesHtml = bubbles.map((bText, idx) => `
+            <div class="p-2.5 text-xs bg-purple-600 text-white rounded-t-xl rounded-bl-xl shadow-2xs">
+              ${idx === 0 ? toolNote : ''}
+              <p class="leading-relaxed whitespace-pre-wrap">${bText}</p>
+              ${idx === bubbles.length - 1 ? stickerNote : ''}
+            </div>
+          `).join('');
+
+          container.innerHTML += `
+            <div class="flex justify-end">
+              <div class="max-w-[75%] space-y-1.5">
+                <span class="text-[10px] text-slate-400 block text-right">Another Me (AI) • ${now} ${bubbles.length > 1 ? `(${bubbles.length} pesan)` : ''}</span>
+                ${bubblesHtml}
+              </div>
+            </div>
+          `;
+          container.scrollTop = container.scrollHeight;
+
+          // Isi field balasan sempurna dengan draft respon awal AI agar mudah diedit oleh user
+          document.getElementById('sim-review-corrected').value = bubbles.join('\n---\n');
+
+          const statusBadge = document.getElementById('sim-interpret-status');
+          statusBadge.className = 'text-[10px] px-2 py-0.5 rounded-full font-medium bg-amber-50 text-amber-700 border border-amber-300';
+          statusBadge.textContent = 'Edit balasan di kiri lalu klik "Interpretasi"';
+        } else {
+          alert('Gagal simulasi: ' + data.error);
+        }
+      } catch (err) {
+        alert('Error simulasi: ' + err.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Uji AI';
+      }
+    }
+
+    async function handleInterpretFromPerfectReply() {
+      const category = document.getElementById('sim-select-category').value;
+      const customContext = document.getElementById('sim-input-context').value.trim();
+      const perfectReply = document.getElementById('sim-review-corrected').value.trim();
+      const interpretBtn = document.getElementById('btn-do-interpret');
+      const statusBadge = document.getElementById('sim-interpret-status');
+      const banner = document.getElementById('sim-analysis-banner');
+      const analysisText = document.getElementById('sim-analysis-text');
+
+      if (!lastSimUserMessage && simHistory.length === 0) {
+        alert('Belum ada pesan simulasi. Ketik pesan penguji di atas terlebih dahulu.');
+        return;
+      }
+
+      if (!perfectReply) {
+        alert('Tuliskan balasan sempurna menurut kamu di kotak "1. Balasan Sempurna Versi Kamu" terlebih dahulu.');
+        return;
+      }
+
+      interpretBtn.disabled = true;
+      interpretBtn.innerHTML = '<span>⏳</span> <span>AI sedang mempelajari jawabanmu...</span>';
+      statusBadge.className = 'text-[10px] px-2 py-0.5 rounded-full font-semibold bg-purple-100 text-purple-700 animate-pulse border border-purple-300';
+      statusBadge.textContent = '🤖 Menganalisis...';
+
+      try {
+        const res = await fetch('/api/simulation/interpret', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            category,
+            scenarioContext: customContext,
+            userMessage: lastSimUserMessage,
+            aiReply: lastSimAIMessage,
+            perfectReply: perfectReply,
+            history: simHistory
+          })
+        });
+
+        if (!res.ok) {
+          const errText = await res.text();
+          throw new Error(`Server ${res.status}: ${errText.includes('Cannot POST') ? 'Harap restart bot di terminal (Ctrl+C lalu npm start)' : errText}`);
+        }
+
+        const data = await res.json();
+        if (data.success && data.interpretation) {
+          const interp = data.interpretation;
+
+          // Isi field fakta/pelajaran untuk Knowledge Base hasil pemahaman AI
+          if (interp.lesson) {
+            document.getElementById('sim-review-knowledge').value = interp.lesson;
+          }
+
+          // Tampilkan refleksi pemahaman AI ("Ohhh, jadi jawabannya harusnya kayak gitu!")
+          if (interp.analysis) {
+            analysisText.textContent = interp.analysis;
+            banner.classList.remove('hidden');
+          }
+
+          statusBadge.className = 'text-[10px] px-2 py-0.5 rounded-full font-semibold bg-emerald-50 text-emerald-700 border border-emerald-300';
+          statusBadge.textContent = '✓ Pelajaran Dipahami AI! Silakan Simpan';
+        } else {
+          statusBadge.className = 'text-[10px] px-2 py-0.5 rounded-full font-medium bg-slate-100 text-slate-500 border border-slate-200';
+          statusBadge.textContent = 'Tinjau Manual';
+        }
+      } catch (err) {
+        console.warn('Gagal interpretasi:', err);
+        statusBadge.className = 'text-[10px] px-2 py-0.5 rounded-full font-semibold bg-rose-50 text-rose-700 border border-rose-300';
+        statusBadge.textContent = err.message.includes('restart') ? 'Harap Restart Bot' : 'Interpretasi Gagal';
+        alert(err.message);
+      } finally {
+        interpretBtn.disabled = false;
+        interpretBtn.innerHTML = '<span>💡</span> <span>Interpretasi (Minta AI Pahami Jawaban Ini)</span>';
+      }
+    }
+
+    async function handleSimStickerUpload(e) {
+      const file = e.target.files?.[0];
+      if (!file) return;
+
+      const statusEl = document.getElementById('sim-sticker-status');
+      statusEl.textContent = 'Menganalisis visual stiker...';
+
+      const formData = new FormData();
+      formData.append('sticker', file);
+
+      try {
+        const res = await fetch('/api/simulation/describe-sticker', {
+          method: 'POST',
+          body: formData
+        });
+        const data = await res.json();
+        if (data.success && data.description) {
+          document.getElementById('sim-input-message').value = `[Mengirim Stiker: "${data.description}"]`;
+          statusEl.textContent = `Visual terdeteksi: "${data.description.slice(0, 40)}..."`;
+        } else {
+          statusEl.textContent = 'Gagal mendeteksi visual stiker';
+        }
+      } catch (err) {
+        statusEl.textContent = 'Error: ' + err.message;
+      }
+    }
+
+    async function approveToFewShot() {
+      const category = document.getElementById('sim-select-category').value;
+      const corrected = document.getElementById('sim-review-corrected').value.trim();
+
+      if (!lastSimUserMessage || !corrected) {
+        alert('Pastikan sudah ada pesan latihan dan koreksi balasan yang diisi.');
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/simulation/learn/fewshot', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            category,
+            userMessage: lastSimUserMessage,
+            approvedReply: corrected
+          })
+        });
+        const data = await res.json();
+        if (data.success) {
+          alert(`✅ Sukses! Contoh obrolan berhasil disimpan ke gaya bahasa persona '${formatCategoryName(category)}'. AI akan meniru gaya ini.`);
+          loadPersonaData();
+        } else {
+          alert('Gagal: ' + data.error);
+        }
+      } catch (err) {
+        alert('Gagal menyimpan contoh: ' + err.message);
+      }
+    }
+
+    async function approveToKnowledge() {
+      const category = document.getElementById('sim-select-category').value;
+      const lesson = document.getElementById('sim-review-knowledge').value.trim();
+
+      if (!lesson) {
+        alert('Tuliskan catatan fakta atau pelajaran baru di kolom fakta/pelajaran terlebih dahulu.');
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/simulation/learn/knowledge', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title: `Pelajaran Skenario: ${lastSimUserMessage.slice(0, 30)}...`,
+            lesson: lesson,
+            category: category
+          })
+        });
+        const data = await res.json();
+        if (data.success) {
+          alert(`✅ Sukses! Pelajaran telah diserap ke Knowledge Base (Target: ${formatCategoryName(category)}). AI akan mengingat fakta ini.`);
+          document.getElementById('sim-review-knowledge').value = '';
+          loadKnowledgeData();
+          fetchStatus();
+        } else {
+          alert('Gagal: ' + data.error);
+        }
+      } catch (err) {
+        alert('Gagal menyerap knowledge: ' + err.message);
+      }
+    }
+
+    async function approveBoth() {
+      const category = document.getElementById('sim-select-category').value;
+      const corrected = document.getElementById('sim-review-corrected').value.trim();
+      const lesson = document.getElementById('sim-review-knowledge').value.trim();
+
+      if (!corrected && !lesson) {
+        alert('Pastikan ada koreksi gaya balasan atau catatan fakta yang ingin disimpan.');
+        return;
+      }
+
+      let doneFewShot = false;
+      let doneKnowledge = false;
+
+      if (corrected && lastSimUserMessage) {
+        try {
+          const res = await fetch('/api/simulation/learn/fewshot', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ category, userMessage: lastSimUserMessage, approvedReply: corrected })
+          });
+          const d = await res.json();
+          if (d.success) doneFewShot = true;
+        } catch {}
+      }
+
+      if (lesson) {
+        try {
+          const res = await fetch('/api/simulation/learn/knowledge', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              title: `Pelajaran Skenario: ${lastSimUserMessage ? lastSimUserMessage.slice(0, 30) : 'Umum'}...`,
+              lesson: lesson,
+              category: category
+            })
+          });
+          const d = await res.json();
+          if (d.success) doneKnowledge = true;
+        } catch {}
+      }
+
+      if (doneFewShot || doneKnowledge) {
+        alert(`✅ Sempurna! Data berhasil disimpan:\n${doneFewShot ? '- Contoh Gaya (Few-Shot) tersimpan\n' : ''}${doneKnowledge ? '- Fakta baru diserap ke Knowledge Base\n' : ''}`);
+        loadPersonaData();
+        loadKnowledgeData();
+        fetchStatus();
+      } else {
+        alert('Gagal menyimpan hasil review.');
+      }
+    }
+
+    // Modal LLM Handlers
+    function openModalLLM() {
+      document.getElementById('input-llm-baseurl').value = currentLLMConfig.baseUrl || '';
+      document.getElementById('input-llm-model').value = currentLLMConfig.model || '';
+      document.getElementById('input-llm-vision-model').value = currentLLMConfig.visionModel || '';
+      document.getElementById('input-llm-apikey').value = '';
+      document.getElementById('modal-llm').classList.remove('hidden');
+    }
+
+    function closeModalLLM() {
+      document.getElementById('modal-llm').classList.add('hidden');
+    }
+
+    async function handleSaveLLM(e) {
+      e.preventDefault();
+      const baseUrl = document.getElementById('input-llm-baseurl').value.trim();
+      const model = document.getElementById('input-llm-model').value.trim();
+      const visionModel = document.getElementById('input-llm-vision-model').value.trim();
+      const apiKey = document.getElementById('input-llm-apikey').value.trim();
+
+      const payload = { baseUrl, model, visionModel };
+      if (apiKey) payload.apiKey = apiKey;
+
+      try {
+        const res = await fetch('/api/settings/llm', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (data.success) {
+          closeModalLLM();
+          fetchStatus();
+        }
+      } catch {
+        alert('Gagal menyimpan LLM');
+      }
+    }
+
+    document.getElementById('btn-toggle-whitelist').addEventListener('click', async () => {
+      await fetch('/api/settings/toggle-whitelist', { method: 'POST' });
+      fetchStatus();
+    });
+
+    document.getElementById('btn-toggle-groups').addEventListener('click', async () => {
+      await fetch('/api/settings/toggle-groups', { method: 'POST' });
+      fetchStatus();
+    });
+
+    function openModalTambah() {
+      document.getElementById('modal-title').textContent = 'Tambah Kontak Baru';
+      document.getElementById('input-old-phone').value = '';
+      document.getElementById('input-phone').value = '';
+      document.getElementById('input-name').value = '';
+      document.getElementById('input-notes').value = '';
+      document.getElementById('check-enabled').checked = true;
+      updateCategoryDropdowns();
+      document.getElementById('modal-contact').classList.remove('hidden');
+    }
+
+    function editContact(phone) {
+      const c = currentContacts[phone];
+      if (!c) return;
+      document.getElementById('modal-title').textContent = 'Edit Kontak';
+      document.getElementById('input-old-phone').value = phone;
+      document.getElementById('input-phone').value = phone;
+      document.getElementById('input-name').value = c.name || '';
+      updateCategoryDropdowns();
+      document.getElementById('select-category').value = c.category || 'default';
+      document.getElementById('input-notes').value = c.notes || '';
+      document.getElementById('check-enabled').checked = c.enabled !== false;
+      document.getElementById('modal-contact').classList.remove('hidden');
+    }
+
+    function closeModal() {
+      document.getElementById('modal-contact').classList.add('hidden');
+    }
+
+    async function handleSaveContact(e) {
+      e.preventDefault();
+      const oldPhone = document.getElementById('input-old-phone').value.trim();
+      const phone = document.getElementById('input-phone').value.trim();
+      const name = document.getElementById('input-name').value.trim();
+      const category = document.getElementById('select-category').value;
+      const notes = document.getElementById('input-notes').value.trim();
+      const enabled = document.getElementById('check-enabled').checked;
+
+      try {
+        await fetch('/api/contacts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone, oldPhone, name, category, notes, enabled })
+        });
+        closeModal();
+        loadContacts();
+        loadConversations();
+        fetchStatus();
+      } catch {
+        alert('Gagal menyimpan kontak');
+      }
+    }
+
+    async function toggleContact(phone) {
+      try {
+        await fetch(`/api/contacts/${phone}/toggle`, { method: 'POST' });
+        loadContacts();
+      } catch {
+        alert('Gagal toggle kontak');
+      }
+    }
+
+    async function clearCurrentChatHistory() {
+      if (!selectedChatPhone) return;
+      if (!confirm(`Hapus seluruh riwayat percakapan untuk nomor ${selectedChatPhone}? AI akan melupakan histori chat sebelumnya dengan kontak ini.`)) {
+        return;
+      }
+
+      try {
+        const res = await fetch(`/api/history/${selectedChatPhone}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (data.success) {
+          document.getElementById('chat-messages-container').innerHTML = `
+            <div class="h-full flex items-center justify-center text-xs text-slate-400">
+              Riwayat obrolan telah dibersihkan.
+            </div>
+          `;
+          loadConversations();
+          alert('Riwayat percakapan berhasil dihapus.');
+        } else {
+          alert('Gagal menghapus riwayat obrolan.');
+        }
+      } catch (err) {
+        alert('Error: ' + err.message);
+      }
+    }
+
+    async function deleteContact(phone) {
+      if (!confirm(`Hapus kontak ${phone}?`)) return;
+      try {
+        await fetch(`/api/contacts/${phone}`, { method: 'DELETE' });
+        loadContacts();
+        loadConversations();
+        fetchStatus();
+      } catch {
+        alert('Gagal menghapus kontak');
+      }
+    }
+
+    async function loadLogs() {
+      try {
+        const res = await fetch('/api/logs');
+        const data = await res.json();
+        const box = document.getElementById('logs-container');
+        if (!data.logs || data.logs.length === 0) {
+          box.innerHTML = `<p class="text-slate-400">Belum ada aktivitas baru.</p>`;
+          return;
+        }
+
+        box.innerHTML = data.logs.map(log => {
+          let color = 'text-slate-600';
+          if (log.type === 'incoming') color = 'text-blue-700 font-bold';
+          if (log.type === 'reply') color = 'text-emerald-700 font-bold';
+          if (log.type === 'error') color = 'text-rose-600 font-semibold';
+          if (log.text.includes('🔧 Tool Call')) color = 'text-purple-700 font-semibold';
+
+          return `<div class="leading-relaxed"><span class="text-slate-400">[${log.time}]</span> <span class="${color}">${log.text}</span></div>`;
+        }).join('');
+      } catch (err) {
+        console.error('Error logs:', err);
+      }
+    }
+
+    // Polling periodik & inisialisasi
+    fetchStatus();
+    loadContacts();
+    loadConversations();
+    loadPersonaData();
+    loadKnowledgeData();
+    loadLogs();
+    setInterval(fetchStatus, 4000);
+    setInterval(loadLogs, 4000);
+    setInterval(loadConversations, 5000);
+  </script>
+</body>
+</html>

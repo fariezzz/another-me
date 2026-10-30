@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+
+# WhatsApp Authentication & Sessions (SANGAT SENSITIF)
+auth_info_baileys/
+
+# Environment Variables & Credentials
+.env
+.env.local
+.env.*.local
+
+# Temporary Uploads
+uploads/
+
+# Data Pribadi Pengguna (Di-ignore agar tidak bocor ke remote)
+data/contacts.json
+data/chat_memory.json
+data/settings.json
+data/knowledge_registry.json
+data/raw_chats/*
+!data/raw_chats/.gitkeep
+data/knowledge/*
+!data/knowledge/.gitkeep
+data/stickers/*
+!data/stickers/.gitkeep
+
+# Dokumen internal / session dump / logs
+another-me.md
+*.log
+
+# OS specific files
+.DS_Store
+Thumbs.db
+desktop.ini

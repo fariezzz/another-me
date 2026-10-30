@@ -1,0 +1,24 @@
+{
+  "description": "Daftar pemetaan kontak dan kontrol toggle auto-reply AI.",
+  "format_note": "Nomor menggunakan format internasional tanpa tanda + (contoh: 6281234567890).",
+  "contacts": {
+    "6281234567890": {
+      "name": "Contoh Pacar",
+      "category": "pacar",
+      "enabled": true,
+      "notes": "Panggil sayang/beeb, gaya perhatian."
+    },
+    "6289876543210": {
+      "name": "Contoh Teman Dekat",
+      "category": "teman_dekat",
+      "enabled": true,
+      "notes": "Gaya santai, sering pakai singkatan wkwk/lu-gua."
+    },
+    "6281122334455": {
+      "name": "Contoh Rekan Kerja / Formal",
+      "category": "formal",
+      "enabled": false,
+      "notes": "Sopan, gunakan Saya/Bapak/Ibu."
+    }
+  }
+}
