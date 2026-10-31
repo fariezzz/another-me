@@ -888,17 +888,19 @@ app.get('/api/conversations', (req, res) => {
   for (const phone of phones) {
     const cleanPhone = phone.replace(/\D/g, '');
     const contact = contextManager.contacts[cleanPhone] || contextManager.contacts[phone] || {
-      name: phone,
+      name: '',
       category: 'default',
       enabled: false,
       notes: ''
     };
     const history = contextManager.getHistory(cleanPhone);
     const lastMsg = history.length > 0 ? history[history.length - 1] : null;
+    const senderMessage = [...history].reverse().find((message) => message.role === 'user' && message.meta);
+    const senderName = senderMessage?.meta?.senderName || senderMessage?.meta?.pushName || '';
 
     result.push({
       phone: cleanPhone,
-      name: contact.name || cleanPhone,
+      name: contact.name || senderName || cleanPhone,
       category: contact.category || 'default',
       enabled: contact.enabled !== false,
       notes: contact.notes || '',

@@ -9,6 +9,113 @@
   <style>
     ::-webkit-scrollbar { display: none; }
     * { -ms-overflow-style: none; scrollbar-width: none; }
+    html { background: #f8fafc; }
+    button, input, select, textarea { -webkit-tap-highlight-color: transparent; }
+    button { touch-action: manipulation; }
+
+    @media (max-width: 767px) {
+      body { font-size: 14px; overflow-x: hidden; }
+      header { height: 54px !important; padding: 0 12px !important; }
+      header h1 { font-size: 15px !important; }
+      header > div:first-child { min-width: 0; }
+      header > div:first-child > div { display: none; }
+      header > div:last-child { gap: 6px !important; }
+      header > div:last-child button { min-height: 36px; }
+      #btn-toggle-service { padding: 7px 9px !important; }
+      #btn-toggle-service #service-text { font-size: 0; }
+      #btn-toggle-service #service-text::after { content: 'Service'; font-size: 11px; }
+      header > div:last-child button[onclick="openModalLLM()"] { font-size: 0; width: 36px; padding: 7px !important; }
+      header > div:last-child button[onclick="openModalLLM()"]::after { content: 'LLM'; font-size: 10px; letter-spacing: .02em; }
+
+      #desktop-nav { display: none !important; }
+      #mobile-nav-toggle { display: inline-flex !important; }
+      #mobile-nav-menu { display: none; position: absolute; top: 54px; left: 10px; right: 10px; z-index: 60; }
+      #mobile-nav-menu.is-open { display: grid; }
+      #mobile-nav-menu button { min-height: 44px; text-align: left; padding: 10px 12px; }
+
+      main[id^="view-"] { padding: 12px !important; gap: 12px !important; }
+      main[id^="view-"] > * { min-width: 0; }
+      .bg-white.rounded-xl { border-radius: 14px; }
+      .p-5 { padding: 14px !important; }
+      .p-4 { padding: 12px !important; }
+      h2.text-base { font-size: 15px !important; line-height: 1.3; }
+      p.text-xs { line-height: 1.45; }
+      input, select, textarea { min-height: 42px; font-size: 14px !important; }
+      textarea { min-height: 90px; }
+      button { min-height: 40px; }
+      .file\:py-1\.5 { padding-top: 9px !important; padding-bottom: 9px !important; }
+
+      #view-dashboard > div:first-child { gap: 10px !important; }
+      #view-dashboard > div:first-child > div { min-height: 0; }
+      .auto-reply-card { padding: 14px !important; }
+      .auto-reply-card > div:first-child > span { margin-bottom: 10px !important; }
+      .auto-reply-card .space-y-2 { display: grid; gap: 4px; }
+      .auto-reply-card .setting-row { min-height: 48px; gap: 14px; }
+      .auto-reply-card .setting-copy { flex: 1; }
+      .auto-reply-card .setting-label { display: block; line-height: 1.35; }
+      .auto-reply-card .setting-description { margin-top: 3px; font-size: 11px !important; line-height: 1.35; color: #64748b; }
+      .auto-reply-card .card-summary { padding-top: 10px; padding-bottom: 1px; font-size: 11px; color: #64748b; }
+      .auto-reply-card button[id^="btn-toggle-"] { width: 36px !important; height: 22px !important; padding: 0 !important; border: 0 !important; border-radius: 999px !important; align-self: center; }
+      .auto-reply-card button[id^="btn-toggle-"] span { width: 18px !important; height: 18px !important; margin-top: 0 !important; transform: translateX(2px); }
+      .auto-reply-card button[id^="btn-toggle-"] span.translate-x-4 { transform: translateX(16px); }
+      #view-dashboard .overflow-x-auto { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+      #view-dashboard table, #view-knowledge table { min-width: 720px; }
+      #view-dashboard > .bg-white.rounded-xl.overflow-hidden { overflow: visible !important; }
+      #view-dashboard > .bg-white.rounded-xl.overflow-hidden > .overflow-x-auto { overflow: visible !important; }
+      #view-dashboard > .bg-white.rounded-xl.overflow-hidden table { display: block; min-width: 0 !important; }
+      #view-dashboard > .bg-white.rounded-xl.overflow-hidden thead { display: none; }
+      #view-dashboard > .bg-white.rounded-xl.overflow-hidden tbody,
+      #view-dashboard > .bg-white.rounded-xl.overflow-hidden tr,
+      #view-dashboard > .bg-white.rounded-xl.overflow-hidden td { display: block; width: 100%; }
+      #view-dashboard > .bg-white.rounded-xl.overflow-hidden tbody { padding: 8px 12px 12px; }
+      #view-dashboard > .bg-white.rounded-xl.overflow-hidden tr { position: relative; background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 12px; margin-bottom: 8px; }
+      #view-dashboard > .bg-white.rounded-xl.overflow-hidden td { padding: 0 !important; border: 0 !important; }
+      #view-dashboard > .bg-white.rounded-xl.overflow-hidden td:nth-child(1) { padding-right: 80px !important; font-size: 13px; }
+      #view-dashboard > .bg-white.rounded-xl.overflow-hidden td:nth-child(2) { margin-top: 4px; font-size: 11px; }
+      #view-dashboard > .bg-white.rounded-xl.overflow-hidden td:nth-child(2)::before { content: 'Nomor WA'; display: block; color: #94a3b8; font-size: 10px; font-family: ui-sans-serif, system-ui, sans-serif; margin-bottom: 2px; }
+      #view-dashboard > .bg-white.rounded-xl.overflow-hidden td:nth-child(3) { position: absolute; top: 11px; right: 11px; width: auto; white-space: nowrap; }
+      #view-dashboard > .bg-white.rounded-xl.overflow-hidden td:nth-child(4) { margin-top: 7px; max-width: none !important; font-size: 11px; }
+      #view-dashboard > .bg-white.rounded-xl.overflow-hidden td:nth-child(4)::before { content: 'Catatan'; display: block; color: #94a3b8; font-size: 10px; margin-bottom: 2px; }
+      #view-dashboard > .bg-white.rounded-xl.overflow-hidden td:nth-child(5) { position: absolute; right: 11px; bottom: 43px; width: auto; }
+      #view-dashboard > .bg-white.rounded-xl.overflow-hidden td:nth-child(3) span { white-space: nowrap; }
+      #view-dashboard > .bg-white.rounded-xl.overflow-hidden td:nth-child(6) { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; padding-top: 10px !important; border-top: 1px solid #f1f5f9 !important; }
+      #view-dashboard > .bg-white.rounded-xl.overflow-hidden td:nth-child(6) button { margin: 0 !important; font-size: 11px; min-height: 32px; }
+      #contacts-table-body td, #knowledge-table-body td { white-space: normal; }
+      #view-dashboard .overflow-x-auto { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+      #view-dashboard .grid.grid-cols-1.lg\:grid-cols-3 { gap: 10px !important; }
+      #conversations-list, #chat-messages-container { min-height: 220px; }
+      #view-dashboard .h-\[480px\] { height: auto !important; min-height: 300px; }
+      #view-dashboard #chat-messages-container { height: 360px; flex: none; }
+      #view-dashboard #conversations-list { max-height: 230px; }
+      #chat-header-name { max-width: 58vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      #chat-header-meta { max-width: 58vw; }
+      #btn-clear-chat { min-height: 34px; padding: 6px 8px !important; }
+      #btn-clear-chat span { font-size: 0; }
+      #btn-clear-chat span::after { content: 'Hapus'; font-size: 11px; }
+      #logs-container { max-height: 220px; font-size: 10px; }
+
+      #persona-categories-grid { grid-template-columns: 1fr !important; }
+      #view-persona .flex.justify-between.items-center { align-items: stretch; flex-direction: column; gap: 10px; }
+      #view-persona .flex.justify-between.items-center button { width: 100%; }
+      #view-knowledge .grid, #view-stickers .grid, #view-training .grid { gap: 12px !important; }
+      #knowledge-table-body, #contacts-table-body { font-size: 11px; }
+      #stickers-gallery { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; max-height: none !important; }
+      #view-training .h-\[640px\], #view-training .h-\[420px\] { height: auto !important; min-height: 0; }
+      #view-training #sim-messages-container { min-height: 330px; max-height: 52vh; }
+      #view-training form .flex { flex-direction: column; }
+      #view-training form .flex button { width: 100%; }
+      #view-training #sim-input-message { width: 100%; }
+      #view-training .grid.grid-cols-1.md\:grid-cols-2 { grid-template-columns: 1fr !important; }
+
+      .fixed.inset-0 { align-items: flex-end !important; padding: 0 !important; }
+      .fixed.inset-0 > div { width: 100% !important; max-width: none !important; max-height: 88vh !important; border-radius: 18px 18px 0 0 !important; padding: 16px !important; overflow-y: auto; }
+      .fixed.inset-0 form .flex, .fixed.inset-0 .flex.justify-end { flex-wrap: wrap; }
+      .fixed.inset-0 form button, .fixed.inset-0 .flex.justify-end button { flex: 1 1 140px; min-height: 42px; }
+    }
+
+    @media (min-width: 768px) {
+      #mobile-nav-toggle, #mobile-nav-menu { display: none !important; }
+    }
   </style>
 </head>
 <body class="bg-slate-50 text-slate-800 min-h-screen font-sans flex flex-col antialiased">
@@ -20,24 +127,22 @@
         Another Me
       </h1>
 
-      <!-- Navigation Tabs -->
-      <nav class="flex items-center gap-1 bg-slate-100 p-1 rounded-lg text-xs font-semibold">
-        <button id="tab-btn-dashboard" onclick="switchTab('dashboard')" class="px-3 py-1.5 rounded-md transition-all cursor-pointer bg-white text-slate-900 shadow-2xs">
-          Dashboard
-        </button>
-        <button id="tab-btn-persona" onclick="switchTab('persona')" class="px-3 py-1.5 rounded-md transition-all cursor-pointer text-slate-600 hover:text-slate-900">
-          Kustom Persona
-        </button>
-        <button id="tab-btn-knowledge" onclick="switchTab('knowledge')" class="px-3 py-1.5 rounded-md transition-all cursor-pointer text-slate-600 hover:text-slate-900">
-          Knowledge Base
-        </button>
-        <button id="tab-btn-stickers" onclick="switchTab('stickers')" class="px-3 py-1.5 rounded-md transition-all cursor-pointer text-slate-600 hover:text-slate-900">
-          Stiker WhatsApp
-        </button>
-        <button id="tab-btn-training" onclick="switchTab('training')" class="px-3 py-1.5 rounded-md transition-all cursor-pointer text-slate-600 hover:text-slate-900 flex items-center gap-1.5">
-          <span class="w-1.5 h-1.5 rounded-full bg-purple-500"></span>
-          Training Room
-        </button>
+      <!-- Navigasi Desktop -->
+      <nav id="desktop-nav" class="flex items-center gap-1 bg-slate-100 p-1 rounded-lg text-xs font-semibold">
+        <button id="tab-btn-dashboard" onclick="switchTab('dashboard')" class="px-3 py-1.5 rounded-md transition-all cursor-pointer bg-white text-slate-900 shadow-2xs">Dashboard</button>
+        <button id="tab-btn-persona" onclick="switchTab('persona')" class="px-3 py-1.5 rounded-md transition-all cursor-pointer text-slate-600 hover:text-slate-900">Kustom Persona</button>
+        <button id="tab-btn-knowledge" onclick="switchTab('knowledge')" class="px-3 py-1.5 rounded-md transition-all cursor-pointer text-slate-600 hover:text-slate-900">Knowledge Base</button>
+        <button id="tab-btn-stickers" onclick="switchTab('stickers')" class="px-3 py-1.5 rounded-md transition-all cursor-pointer text-slate-600 hover:text-slate-900">Stiker WhatsApp</button>
+        <button id="tab-btn-training" onclick="switchTab('training')" class="px-3 py-1.5 rounded-md transition-all cursor-pointer text-slate-600 hover:text-slate-900 flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-purple-500"></span>Training Room</button>
+      </nav>
+      <!-- Navigasi Mobile -->
+      <button id="mobile-nav-toggle" onclick="toggleMobileNav()" class="hidden items-center justify-center w-9 h-9 rounded-lg bg-slate-100 border border-slate-200 text-slate-700 text-lg" aria-label="Buka menu">☰</button>
+      <nav id="mobile-nav-menu" class="bg-white border border-slate-200 rounded-xl p-2 shadow-lg gap-1 text-sm font-semibold">
+        <button onclick="switchTab('dashboard'); closeMobileNav()" class="rounded-lg text-slate-700">Dashboard</button>
+        <button onclick="switchTab('persona'); closeMobileNav()" class="rounded-lg text-slate-700">Kustom Persona</button>
+        <button onclick="switchTab('knowledge'); closeMobileNav()" class="rounded-lg text-slate-700">Knowledge Base</button>
+        <button onclick="switchTab('stickers'); closeMobileNav()" class="rounded-lg text-slate-700">Stiker WhatsApp</button>
+        <button onclick="switchTab('training'); closeMobileNav()" class="rounded-lg text-slate-700">Training Room</button>
       </nav>
     </div>
 
@@ -104,33 +209,33 @@
       </div>
 
       <!-- Kartu 3: Pengaturan Filter AI -->
-      <div class="bg-white rounded-xl border border-slate-200 p-4 shadow-xs flex flex-col justify-between">
+      <div class="auto-reply-card bg-white rounded-xl border border-slate-200 p-4 shadow-xs flex flex-col justify-between">
         <div>
           <span class="text-xs font-bold uppercase tracking-wider text-slate-500 block mb-3">Filter Auto-Reply</span>
           <div class="space-y-2">
-            <div class="flex items-center justify-between">
-              <div>
-                <span class="text-xs font-medium text-slate-800">Mode Whitelist</span>
-                <p class="text-[10px] text-slate-500">Hanya balas kontak di tabel</p>
+            <div class="setting-row flex items-center justify-between">
+              <div class="setting-copy min-w-0">
+                <span class="setting-label text-xs font-medium text-slate-800">Mode Whitelist</span>
+                <p class="setting-description text-[10px] text-slate-500">Hanya balas kontak di tabel</p>
               </div>
-              <button id="btn-toggle-whitelist" class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border border-transparent transition-colors duration-150 ease-in-out bg-slate-300">
+              <button id="btn-toggle-whitelist" type="button" aria-label="Toggle Mode Whitelist" aria-pressed="false" class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border border-transparent transition-colors duration-150 ease-in-out bg-slate-300">
                 <span id="whitelist-knob" class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-xs transition duration-150 ease-in-out translate-x-0.5 mt-0.5"></span>
               </button>
             </div>
 
-            <div class="flex items-center justify-between">
-              <div>
-                <span class="text-xs font-medium text-slate-800">Balas Pesan Grup</span>
-                <p class="text-[10px] text-slate-500">Auto-reply di grup WA</p>
+            <div class="setting-row flex items-center justify-between">
+              <div class="setting-copy min-w-0">
+                <span class="setting-label text-xs font-medium text-slate-800">Balas Pesan Grup</span>
+                <p class="setting-description text-[10px] text-slate-500">Auto-reply di grup WA</p>
               </div>
-              <button id="btn-toggle-groups" class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border border-transparent transition-colors duration-150 ease-in-out bg-slate-300">
+              <button id="btn-toggle-groups" type="button" aria-label="Toggle Balas Pesan Grup" aria-pressed="false" class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border border-transparent transition-colors duration-150 ease-in-out bg-slate-300">
                 <span id="groups-knob" class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-xs transition duration-150 ease-in-out translate-x-0.5 mt-0.5"></span>
               </button>
             </div>
           </div>
         </div>
 
-        <div class="mt-3 pt-2 border-t border-slate-100 text-[11px] text-slate-500 flex justify-between">
+        <div class="card-summary mt-3 pt-2 border-t border-slate-100 text-[11px] text-slate-500 flex justify-between">
           <span id="contact-count-text">0 Kontak</span>
           <span id="active-chats-count">0 Percakapan</span>
         </div>
@@ -191,7 +296,7 @@
         <div class="border-b border-slate-200 pb-3 mb-3 flex items-center justify-between">
           <div>
             <h3 id="chat-header-name" class="text-sm font-bold text-slate-900">Pilih Kontak</h3>
-            <p id="chat-header-meta" class="text-xs text-slate-500">Klik salah satu kontak di sebelah kiri untuk melihat dialognya.</p>
+            <p id="chat-header-meta" class="text-xs text-slate-500">Pilih percakapan untuk melihat riwayat pesan.</p>
           </div>
           <div class="flex items-center gap-2">
             <span id="chat-header-badge" class="hidden px-2.5 py-0.5 rounded-full text-[11px] font-medium border"></span>
@@ -220,7 +325,7 @@
           Segarkan
         </button>
       </div>
-      <div id="logs-container" class="space-y-1.5 max-h-40 overflow-y-auto font-mono text-xs text-slate-700 bg-slate-50 p-3 rounded-lg border border-slate-200">
+      <div id="logs-container" class="space-y-1.5 max-h-40 overflow-y-auto text-xs text-slate-700 bg-slate-50 p-3 rounded-lg border border-slate-200">
         <p class="text-slate-400">Belum ada aktivitas baru.</p>
       </div>
     </div>
@@ -738,6 +843,14 @@
     let currentKnowledge = [];
     let selectedChatPhone = null;
 
+    function toggleMobileNav() {
+      document.getElementById('mobile-nav-menu')?.classList.toggle('is-open');
+    }
+
+    function closeMobileNav() {
+      document.getElementById('mobile-nav-menu')?.classList.remove('is-open');
+    }
+
     // Tab Switcher
     function switchTab(tabId) {
       const tabs = ['dashboard', 'persona', 'knowledge', 'stickers', 'training'];
@@ -840,17 +953,12 @@
     function updateKnob(knobId, btnId, active) {
       const knob = document.getElementById(knobId);
       const btn = document.getElementById(btnId);
-      if (active) {
-        btn.classList.remove('bg-slate-300');
-        btn.classList.add('bg-emerald-600');
-        knob.classList.remove('translate-x-0.5');
-        knob.classList.add('translate-x-4');
-      } else {
-        btn.classList.remove('bg-emerald-600');
-        btn.classList.add('bg-slate-300');
-        knob.classList.remove('translate-x-4');
-        knob.classList.add('translate-x-0.5');
-      }
+      if (!knob || !btn) return;
+      btn.classList.toggle('bg-slate-300', !active);
+      btn.classList.toggle('bg-emerald-600', active);
+      btn.setAttribute('aria-pressed', String(Boolean(active)));
+      knob.classList.toggle('translate-x-0.5', !active);
+      knob.classList.toggle('translate-x-4', active);
     }
 
     function formatCategoryName(key) {
@@ -863,6 +971,34 @@
       };
       if (map[key]) return map[key];
       return key ? key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, ' ') : 'Default';
+    }
+
+    function formatPhoneNumber(phone) {
+      const digits = String(phone || '').replace(/\D/g, '');
+      if (!digits) return '-';
+      if (digits.startsWith('62')) return `+${digits.slice(0, 2)} ${digits.slice(2, 5)} ${digits.slice(5, 9)} ${digits.slice(9)}`.trim();
+      return digits.replace(/(\d{3})(?=\d)/g, '$1 ').trim();
+    }
+
+    function summarizeLog(log) {
+      const text = String(log.text || '');
+      if (text.includes('Tool Call')) {
+        const match = text.match(/Tool Call \[([^\]]+)\]/);
+        return `AI menggunakan tool: ${match ? match[1] : 'Agent Tool'}`;
+      }
+      if (text.startsWith('Balasan AI')) {
+        const match = text.match(/Balasan AI \[[^\]]+\] terkirim ke ([^:]+):/);
+        return match ? `Balasan AI terkirim ke ${match[1]}` : 'Balasan AI terkirim';
+      }
+      if (text.startsWith('Pesan Masuk')) {
+        const match = text.match(/Pesan Masuk dari ([^:]+):/);
+        return match ? `Pesan masuk dari ${match[1]}` : 'Pesan masuk diterima';
+      }
+      if (text.includes('Stiker') && text.includes('terkirim')) {
+        const match = text.match(/Stiker \[([^\]]+)\] terkirim ke (.+)/);
+        return match ? `Stiker “${match[1]}” terkirim ke ${match[2]}` : 'Stiker terkirim';
+      }
+      return text.length > 180 ? `${text.slice(0, 177)}...` : text;
     }
 
     async function loadContacts() {
@@ -887,7 +1023,7 @@
           return `
             <tr class="hover:bg-slate-50 transition-colors">
               <td class="px-4 py-2.5 font-semibold text-slate-900">${c.name || '-'}</td>
-              <td class="px-4 py-2.5 font-mono text-slate-600">${phone}</td>
+              <td class="px-4 py-2.5 font-mono text-slate-600">${formatPhoneNumber(phone)}</td>
               <td class="px-4 py-2.5">
                 <span class="px-2 py-0.5 rounded-full text-[11px] font-medium border bg-slate-100 text-slate-700 border-slate-200">
                   ${displayCategory}
@@ -938,7 +1074,7 @@
                 <span class="text-xs font-bold text-slate-900 truncate">${c.name}</span>
                 <span class="text-[10px] text-slate-400 shrink-0 ml-1">${time}</span>
               </div>
-              <p class="text-[11px] text-slate-600 truncate">${lastText}</p>
+              <p class="text-[11px] text-slate-600 line-clamp-2">${lastText}</p>
             </div>
           `;
         }).join('');
@@ -1894,7 +2030,7 @@
           if (log.type === 'error') color = 'text-rose-600 font-semibold';
           if (log.text.includes('🔧 Tool Call')) color = 'text-purple-700 font-semibold';
 
-          return `<div class="leading-relaxed"><span class="text-slate-400">[${log.time}]</span> <span class="${color}">${log.text}</span></div>`;
+          return `<div class="leading-relaxed break-words"><span class="text-slate-400 mr-1">${log.time}</span><span class="${color}">${summarizeLog(log)}</span></div>`;
         }).join('');
       } catch (err) {
         console.error('Error logs:', err);
