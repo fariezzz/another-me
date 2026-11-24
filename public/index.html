@@ -8,529 +8,809 @@
 </head>
 <body>
 
-  <!-- Topbar Sticky Navigation -->
+  <!-- Unified Inline SVG Icon Sprite (100% Offline, Zero CDN) -->
+  <svg class="hidden" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <symbol id="i-brand" viewBox="0 0 24 24"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/><circle cx="12" cy="11.5" r="1.5" fill="currentColor" stroke="none"/></symbol>
+      <symbol id="i-menu" viewBox="0 0 24 24"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/></symbol>
+      <symbol id="i-close" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></symbol>
+      <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+      <symbol id="i-user" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></symbol>
+      <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></symbol>
+      <symbol id="i-smile" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></symbol>
+      <symbol id="i-flask" viewBox="0 0 24 24"><path d="M9 3h6"/><path d="M10 3v6.5L4.6 18.2A2 2 0 0 0 6.3 21h11.4a2 2 0 0 0 1.7-2.8L14 9.5V3"/></symbol>
+      <symbol id="i-phone" viewBox="0 0 24 24"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3.1-8.7A2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2.1z"/></symbol>
+      <symbol id="i-cpu" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></symbol>
+      <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></symbol>
+      <symbol id="i-chat" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></symbol>
+      <symbol id="i-users" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
+      <symbol id="i-send" viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></symbol>
+      <symbol id="i-terminal" viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></symbol>
+      <symbol id="i-upload" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></symbol>
+      <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></symbol>
+      <symbol id="i-refresh" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></symbol>
+      <symbol id="i-sliders" viewBox="0 0 24 24"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></symbol>
+      <symbol id="i-eye" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></symbol>
+      <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></symbol>
+      <symbol id="i-edit" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></symbol>
+      <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3l1.9 5.8L20 10.7l-5.1 2.7L12 20l-2.9-6.6L4 10.7l6.1-1.9L12 3z"/></symbol>
+    </defs>
+  </svg>
+
+  <!-- Sticky Topbar -->
   <header class="topbar">
     <div class="topbar-left">
-      <button id="mobile-nav-toggle" type="button" class="mobile-nav-toggle" aria-label="Buka menu navigasi">☰</button>
-      <h1 class="brand-title">Another Me</h1>
+      <button id="mobile-nav-toggle" type="button" class="mobile-nav-toggle" aria-label="Buka menu navigasi" aria-expanded="false">
+        <svg class="icon" id="mobile-nav-icon"><use href="#i-menu"/></svg>
+      </button>
 
-      <!-- Navigasi Desktop -->
+      <div class="brand-lockup">
+        <div class="brand-mark" aria-hidden="true">
+          <svg class="icon"><use href="#i-brand"/></svg>
+        </div>
+        <div class="brand-text">
+          <h1 class="brand-title">Another Me</h1>
+          <span class="brand-sub">Kontrol Persona WhatsApp</span>
+        </div>
+      </div>
+
       <nav id="desktop-nav" class="desktop-nav" aria-label="Navigasi utama">
-        <button type="button" data-tab="dashboard" class="nav-tab is-active">Dashboard</button>
-        <button type="button" data-tab="persona" class="nav-tab">Kustom Persona</button>
-        <button type="button" data-tab="knowledge" class="nav-tab">Knowledge Base</button>
-        <button type="button" data-tab="stickers" class="nav-tab">Stiker WhatsApp</button>
-        <button type="button" data-tab="training" class="nav-tab"><span class="dot dot-purple"></span>Training Room</button>
-      </nav>
-
-      <!-- Navigasi Mobile -->
-      <nav id="mobile-nav-menu" class="mobile-nav-menu" aria-label="Navigasi ponsel">
-        <button type="button" data-tab="dashboard" class="nav-tab is-active">Dashboard</button>
-        <button type="button" data-tab="persona" class="nav-tab">Kustom Persona</button>
-        <button type="button" data-tab="knowledge" class="nav-tab">Knowledge Base</button>
-        <button type="button" data-tab="stickers" class="nav-tab">Stiker WhatsApp</button>
-        <button type="button" data-tab="training" class="nav-tab"><span class="dot dot-purple"></span>Training Room</button>
+        <button type="button" data-tab="dashboard" class="nav-tab is-active">
+          <svg class="icon icon-sm"><use href="#i-grid"/></svg>
+          <span>Dashboard</span>
+        </button>
+        <button type="button" data-tab="persona" class="nav-tab">
+          <svg class="icon icon-sm"><use href="#i-user"/></svg>
+          <span>Persona</span>
+        </button>
+        <button type="button" data-tab="knowledge" class="nav-tab">
+          <svg class="icon icon-sm"><use href="#i-book"/></svg>
+          <span>Knowledge</span>
+          <span id="nav-count-knowledge" class="nav-count">0</span>
+        </button>
+        <button type="button" data-tab="stickers" class="nav-tab">
+          <svg class="icon icon-sm"><use href="#i-smile"/></svg>
+          <span>Stiker</span>
+          <span id="nav-count-stickers" class="nav-count">0</span>
+        </button>
+        <button type="button" data-tab="training" class="nav-tab">
+          <svg class="icon icon-sm"><use href="#i-flask"/></svg>
+          <span>Training Room</span>
+        </button>
       </nav>
     </div>
 
     <div class="topbar-right">
-      <button id="btn-toggle-service" type="button" class="btn btn-soft-emerald btn-service-mobile">
-        <span class="dot dot-emerald" id="service-dot"></span>
+      <button id="btn-toggle-service" type="button" class="btn btn-soft-accent btn-topbar">
+        <span class="dot dot-accent" id="service-dot"></span>
         <span id="service-text">Service: ON</span>
       </button>
-      <button id="btn-open-llm" type="button" class="btn btn-outline btn-llm-mobile">
-        Konfigurasi LLM
+      <button id="btn-open-llm" type="button" class="btn btn-secondary btn-topbar">
+        <svg class="icon icon-sm"><use href="#i-sliders"/></svg>
+        <span class="btn-llm-label-full">Konfigurasi LLM</span>
+        <span class="btn-llm-label-short">LLM</span>
       </button>
     </div>
   </header>
 
-  <!-- ======================================================== -->
-  <!-- TAB 1: DASHBOARD UTAMA                                   -->
-  <!-- ======================================================== -->
-  <main id="view-dashboard" class="main-view">
+  <!-- Mobile Navigation Drawer + Backdrop -->
+  <div id="mobile-nav-backdrop" class="mobile-nav-backdrop hidden" aria-hidden="true"></div>
+  <nav id="mobile-nav-menu" class="mobile-nav-menu" aria-label="Navigasi ponsel">
+    <button type="button" data-tab="dashboard" class="nav-tab is-active">
+      <span class="nav-tab-label"><svg class="icon"><use href="#i-grid"/></svg> Dashboard</span>
+    </button>
+    <button type="button" data-tab="persona" class="nav-tab">
+      <span class="nav-tab-label"><svg class="icon"><use href="#i-user"/></svg> Kustom Persona</span>
+    </button>
+    <button type="button" data-tab="knowledge" class="nav-tab">
+      <span class="nav-tab-label"><svg class="icon"><use href="#i-book"/></svg> Knowledge Base</span>
+      <span id="mnav-count-knowledge" class="nav-count">0</span>
+    </button>
+    <button type="button" data-tab="stickers" class="nav-tab">
+      <span class="nav-tab-label"><svg class="icon"><use href="#i-smile"/></svg> Stiker WhatsApp</span>
+      <span id="mnav-count-stickers" class="nav-count">0</span>
+    </button>
+    <button type="button" data-tab="training" class="nav-tab">
+      <span class="nav-tab-label"><svg class="icon"><use href="#i-flask"/></svg> Training Room</span>
+    </button>
+  </nav>
 
-    <!-- Banner Peringatan Antrean !ask Macet (> 5 Menit) -->
-    <div id="ask-stale-banner" class="alert-banner hidden" role="status">
-      <div>
-        <strong>Peringatan Antrean !ask Tertahan</strong>
-        <span id="ask-stale-text">-</span>
-      </div>
-      <span id="ask-stale-badge" class="pill pill-amber">0 Pending</span>
-    </div>
+  <!-- Single Semantic Main Shell -->
+  <main class="app-shell">
 
-    <!-- Row 1: Status Ringkas Sistem & Mode AI -->
-    <div class="grid-3">
+    <!-- ======================================================== -->
+    <!-- TAB 1: DASHBOARD UTAMA                                   -->
+    <!-- ======================================================== -->
+    <section id="view-dashboard" class="tab-panel" aria-label="Dashboard Utama">
 
-      <!-- Kartu 1: Status WhatsApp, QR SVG Lokal, & Kode Pairing -->
-      <div class="card">
-        <div class="card-header">
-          <span class="card-kicker">Koneksi WhatsApp</span>
-          <span id="wa-pill" class="pill">Memeriksa</span>
-        </div>
-        <p id="wa-text-desc" class="card-subtitle">Menghubungkan ke server WhatsApp...</p>
-        <p id="wa-disconnect-reason" class="field-hint hidden"></p>
-
-        <div id="qr-wrapper" class="qr-box hidden">
-          <div id="qrcode" class="qr-svg-wrap"></div>
-          <p class="field-hint">Pindai kode QR ini lewat WhatsApp di ponsel kamu (Perangkat Tertaut).</p>
-        </div>
-
-        <div id="pairing-section" class="pairing-panel hidden">
-          <div id="pairing-code-box" class="pairing-code-display hidden">
-            <div>
-              <span class="field-hint" style="display:block;margin:0;">Kode Pairing 8 Digit</span>
-              <span id="pairing-code-value" class="pairing-code-value font-mono">-</span>
-            </div>
-            <button id="btn-copy-pairing" type="button" class="btn btn-sm btn-outline">Salin</button>
-          </div>
-          <form id="form-pairing-code" class="inline-form">
-            <input type="text" id="input-pairing-phone" class="input font-mono" placeholder="Nomor 628... untuk Kode Pairing">
-            <button id="btn-request-pairing" type="submit" class="btn btn-sm btn-outline">Minta Kode</button>
-          </form>
-        </div>
-      </div>
-
-      <!-- Kartu 2: Status Provider LLM -->
-      <div class="card">
+      <!-- Peringatan Antrean !ask Tertahan (> 5 Menit) -->
+      <div id="ask-stale-banner" class="alert-banner hidden" role="status">
         <div>
-          <div class="card-header">
-            <span class="card-kicker">Mesin AI (LLM)</span>
+          <strong>Antrean !ask Tertahan</strong>
+          <span id="ask-stale-text">-</span>
+        </div>
+        <span id="ask-stale-badge" class="pill pill-solid">0 Tertahan</span>
+      </div>
+
+      <!-- Baris 1: 3 Kartu Status Bento Seimbang -->
+      <div class="grid-status">
+
+        <!-- Kartu 1: Koneksi WhatsApp -->
+        <article class="card status-card">
+          <div class="card-head">
+            <div class="card-title-group">
+              <span class="icon-badge icon-badge-accent"><svg class="icon"><use href="#i-phone"/></svg></span>
+              <div>
+                <h2 class="card-title">Koneksi WhatsApp</h2>
+                <p class="card-subtitle">Status soket perangkat tertaut</p>
+              </div>
+            </div>
+            <span id="wa-pill" class="pill">Memeriksa</span>
+          </div>
+
+          <div class="status-card-body">
+            <div class="status-inset">
+              <p id="wa-text-desc" class="status-detail">Menghubungkan ke server WhatsApp...</p>
+              <p id="wa-disconnect-reason" class="field-hint mono hidden"></p>
+            </div>
+
+            <div id="qr-wrapper" class="qr-box hidden">
+              <div id="qrcode" class="qr-svg-wrap"></div>
+              <p class="field-hint" style="margin:0;">Pindai kode QR melalui Perangkat Tertaut di aplikasi WhatsApp ponsel kamu.</p>
+            </div>
+
+            <div id="pairing-section" class="pairing-panel hidden">
+              <div id="pairing-code-box" class="pairing-code-display hidden">
+                <div>
+                  <span class="field-hint" style="display:block;margin:0;">Kode Pairing 8 Digit</span>
+                  <span id="pairing-code-value" class="pairing-code-value mono">-</span>
+                </div>
+                <button id="btn-copy-pairing" type="button" class="btn btn-xs btn-secondary">
+                  <svg class="icon icon-sm"><use href="#i-copy"/></svg> Salin
+                </button>
+              </div>
+              <form id="form-pairing-code" class="inline-row inline-row-stack-mobile">
+                <input type="text" id="input-pairing-phone" class="input mono" placeholder="Nomor 628... untuk kode pairing">
+                <button id="btn-request-pairing" type="submit" class="btn btn-sm btn-secondary">Minta Kode</button>
+              </form>
+            </div>
+          </div>
+
+          <div class="card-foot">
+            <span>Burst 4 dtk · Maks 2 balon · Kapital awal</span>
+            <span id="wa-active-chats-pill" class="pill pill-outline">0 Percakapan</span>
+          </div>
+        </article>
+
+        <!-- Kartu 2: Mesin AI (LLM) -->
+        <article class="card status-card">
+          <div class="card-head">
+            <div class="card-title-group">
+              <span class="icon-badge"><svg class="icon"><use href="#i-cpu"/></svg></span>
+              <div>
+                <h2 class="card-title">Mesin AI (LLM)</h2>
+                <p class="card-subtitle">Model teks & vision aktif</p>
+              </div>
+            </div>
             <span id="llm-pill" class="pill">Memeriksa</span>
           </div>
-          <p id="llm-model-name" class="card-title truncate" style="margin-top:8px;">-</p>
-          <p id="llm-base-url" class="field-hint font-mono truncate">-</p>
-        </div>
-        <div class="card-footer-line">
-          <span style="display:inline-flex;align-items:center;gap:6px;">
-            <span class="dot dot-emerald"></span>
-            <span id="agent-tools-badge">Agent Tools Aktif</span>
-          </span>
-          <div style="display:inline-flex;gap:10px;">
-            <button id="btn-refresh-llm" type="button" class="btn-link btn-link-emerald">Cek Ulang</button>
-            <button id="btn-edit-llm-card" type="button" class="btn-link btn-link-blue">Ubah</button>
-          </div>
-        </div>
-      </div>
 
-      <!-- Kartu 3: Pengaturan Filter Auto-Reply -->
-      <div class="card">
-        <div>
-          <span class="card-kicker" style="display:block;margin-bottom:8px;">Filter Auto-Reply</span>
-          <div class="setting-row">
-            <div>
-              <span class="setting-label">Mode Whitelist</span>
-              <p class="setting-desc">Hanya balas kontak di tabel</p>
-            </div>
-            <button id="btn-toggle-whitelist" type="button" class="switch" aria-label="Toggle Mode Whitelist" aria-pressed="false">
-              <span class="switch-knob"></span>
-            </button>
-          </div>
-
-          <div class="setting-row">
-            <div>
-              <span class="setting-label">Balas Pesan Grup</span>
-              <p class="setting-desc">Auto-reply di grup WhatsApp</p>
-            </div>
-            <button id="btn-toggle-groups" type="button" class="switch" aria-label="Toggle Balas Pesan Grup" aria-pressed="false">
-              <span class="switch-knob"></span>
-            </button>
-          </div>
-        </div>
-
-        <div class="card-footer-line">
-          <span id="contact-count-text">0 Kontak</span>
-          <span id="active-chats-count">0 Percakapan</span>
-        </div>
-      </div>
-
-    </div>
-
-    <!-- Row 2: Tabel Kelola Kontak -->
-    <div class="card card-flush">
-      <div class="card-header card-header-padded">
-        <div>
-          <h2 class="card-title">Daftar Kontak & Persona</h2>
-          <p class="card-subtitle">Atur kategori kepribadian, tipe identitas Jabber Identifier (JID), dan izin balas otomatis per kontak.</p>
-        </div>
-        <button id="btn-add-contact" type="button" class="btn btn-primary">+ Tambah Kontak</button>
-      </div>
-
-      <div class="table-wrap">
-        <table class="data-table mobile-cards-table">
-          <thead>
-            <tr>
-              <th>Nama</th>
-              <th>Nomor / ID Kontak (LID)</th>
-              <th>Kategori</th>
-              <th>Catatan Persona</th>
-              <th class="text-center">Status AI</th>
-              <th class="text-right">Aksi</th>
-            </tr>
-          </thead>
-          <tbody id="contacts-table-body">
-            <tr><td colspan="6" class="empty-cell">Memuat data kontak...</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-
-    <!-- Row 3: Pemantau Balasan AI & Riwayat Percakapan -->
-    <div class="grid-1-2">
-      <div class="card panel-fixed">
-        <div style="margin-bottom:10px;">
-          <h2 class="card-title">Riwayat Percakapan</h2>
-          <p class="card-subtitle">Pilih kontak untuk menginspeksi percakapan dan membedakan balasan AI vs kirim manual.</p>
-        </div>
-        <div id="conversations-list" class="scroll-area conv-list">
-          <p class="empty-cell">Belum ada percakapan masuk.</p>
-        </div>
-      </div>
-
-      <div class="card panel-fixed">
-        <div class="card-header" style="border-bottom:1px solid var(--border);padding-bottom:10px;margin-bottom:10px;">
-          <div style="min-width:0;">
-            <h3 id="chat-header-name" class="card-title truncate">Pilih Kontak</h3>
-            <p id="chat-header-meta" class="card-subtitle">Pilih percakapan di kiri untuk melihat riwayat pesan.</p>
-          </div>
-          <div style="display:flex;align-items:center;gap:8px;">
-            <span id="chat-header-badge" class="pill hidden"></span>
-            <button id="btn-clear-chat" type="button" class="btn btn-sm btn-soft-rose hidden">Hapus History</button>
-          </div>
-        </div>
-        <div id="chat-messages-container" class="scroll-area chat-stream">
-          <div class="empty-cell">Belum ada kontak yang dipilih.</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Row 4: Kirim Pesan Manual -->
-    <div class="card">
-      <span class="card-kicker">Kirim Pesan Manual</span>
-      <p class="card-subtitle" style="margin-bottom:12px;">Pesan inisiatif langsung dari akun WhatsApp ini (bukan balasan AI). Pisahkan dengan <code>---</code> untuk multi-balon tanpa batas 2 balon. Memilih kontak dari daftar otomatis memakai JID tersimpan (<code>@lid</code>).</p>
-      <form id="form-manual-send" class="form-stack">
-        <div class="field">
-          <label for="select-manual-contact">Pilih Kontak Terdaftar (Direkomendasikan untuk LID)</label>
-          <select id="select-manual-contact" class="select">
-            <option value="">Ketik nomor manual di bawah atau pilih kontak...</option>
-          </select>
-        </div>
-        <div class="field">
-          <label for="input-manual-phone">Nomor Tujuan atau ID Kontak</label>
-          <input type="text" id="input-manual-phone" class="input font-mono" required placeholder="Misal: 62812... atau angka ID kontak">
-          <p id="manual-route-hint" class="field-hint">Jalur kirim: /api/send-message (nomor manual)</p>
-        </div>
-        <div class="field">
-          <label for="input-manual-message">Isi Pesan</label>
-          <textarea id="input-manual-message" class="textarea" rows="3" required placeholder="Tulis pesan yang akan dikirim..."></textarea>
-        </div>
-        <button type="submit" id="btn-manual-send" class="btn btn-primary btn-full">Kirim via WhatsApp</button>
-        <p id="manual-send-status" class="field-hint"></p>
-      </form>
-    </div>
-
-    <!-- Row 5: Log Aktivitas Layanan -->
-    <div class="card">
-      <div class="card-header" style="margin-bottom:10px;">
-        <span class="card-kicker">Log Aktivitas Layanan</span>
-        <button id="btn-refresh-logs" type="button" class="btn btn-sm btn-subtle">Segarkan</button>
-      </div>
-      <div id="logs-container" class="logs-box">
-        <p class="empty-cell" style="padding:8px !important;">Belum ada aktivitas baru.</p>
-      </div>
-    </div>
-
-  </main>
-
-  <!-- ======================================================== -->
-  <!-- TAB 2: KUSTOM PERSONA & ATURAN GAYA KETIK                -->
-  <!-- ======================================================== -->
-  <main id="view-persona" class="main-view hidden">
-    <div class="card">
-      <div class="card-header" style="margin-bottom:14px;">
-        <div>
-          <h2 class="card-title">Identitas & Gaya Pengetikan Umum</h2>
-          <p class="card-subtitle">Aturan ketik ini diterapkan ke semua pesan (termasuk kapitalisasi awal balon dan gaya santai).</p>
-        </div>
-        <button id="btn-save-general-persona" type="button" class="btn btn-primary">Simpan Aturan Umum</button>
-      </div>
-
-      <div class="form-stack">
-        <div class="field">
-          <label for="input-general-identity">Definisi Identitas AI (System Prompt)</label>
-          <textarea id="input-general-identity" class="textarea" rows="2"></textarea>
-        </div>
-        <div class="field">
-          <label for="input-general-rules">Aturan Gaya Ketik (Satu aturan per baris)</label>
-          <textarea id="input-general-rules" class="textarea font-mono" rows="5"></textarea>
-        </div>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="card-header" style="margin-bottom:14px;">
-        <div>
-          <h2 class="card-title">Kategori Persona Relasi</h2>
-          <p class="card-subtitle">Sesuaikan nada bicara, kosakata panggilan, dan contoh obrolan (Few-Shot) per hubungan.</p>
-        </div>
-        <button id="btn-add-category" type="button" class="btn btn-primary">+ Tambah Kategori Baru</button>
-      </div>
-
-      <div id="persona-categories-grid" class="grid-cards"></div>
-    </div>
-  </main>
-
-  <!-- ======================================================== -->
-  <!-- TAB 3: KNOWLEDGE BASE INJECTION (MULTI-FORMAT)           -->
-  <!-- ======================================================== -->
-  <main id="view-knowledge" class="main-view hidden">
-    <div class="grid-2">
-      <div class="card">
-        <h2 class="card-title">Unggah Dokumen Pengetahuan</h2>
-        <p class="card-subtitle" style="margin-bottom:12px;">Format didukung: <code>.txt</code>, <code>.md</code>, <code>.pdf</code>, <code>.docx</code>, <code>.json</code>, <code>.csv</code> (maksimal 10 MB).</p>
-        <form id="form-upload-doc" class="form-stack">
-          <div class="field">
-            <label for="input-doc-title">Judul Dokumen</label>
-            <input type="text" id="input-doc-title" class="input" required placeholder="Misal: Jadwal Kuliah Semester 5, Catatan Pribadi">
-          </div>
-          <div class="field">
-            <label for="select-doc-category">Kategori Sasaran</label>
-            <select id="select-doc-category" class="select"></select>
-            <p class="field-hint">Perhatian: Kategori Universal dapat diakses seluruh kontak aktif.</p>
-          </div>
-          <div class="field">
-            <label for="input-doc-file">Pilih File</label>
-            <input type="file" id="input-doc-file" class="input-file" required accept=".txt,.md,.pdf,.docx,.json,.csv">
-          </div>
-          <button type="submit" id="btn-submit-upload" class="btn btn-primary btn-full">Ekstrak & Simpan Dokumen</button>
-        </form>
-      </div>
-
-      <div class="card">
-        <h2 class="card-title">Catatan Faktual Langsung (Snippet)</h2>
-        <p class="card-subtitle" style="margin-bottom:12px;">Ketik langsung fakta penting yang perlu diingat AI (jadwal, preferensi, agenda).</p>
-        <form id="form-snippet" class="form-stack">
-          <div class="field">
-            <label for="input-snippet-title">Judul Catatan</label>
-            <input type="text" id="input-snippet-title" class="input" required placeholder="Misal: Jadwal Rutin, Hobi, Preferensi">
-          </div>
-          <div class="field">
-            <label for="select-snippet-category">Kategori Sasaran</label>
-            <select id="select-snippet-category" class="select"></select>
-          </div>
-          <div class="field">
-            <label for="input-snippet-content">Isi Informasi Faktual</label>
-            <textarea id="input-snippet-content" class="textarea" rows="3" required placeholder="Tuliskan fakta penting di sini..."></textarea>
-          </div>
-          <button type="submit" class="btn btn-primary btn-full">Simpan Catatan Faktual</button>
-        </form>
-      </div>
-    </div>
-
-    <div class="card card-flush">
-      <div class="card-header card-header-padded">
-        <div>
-          <h2 class="card-title">Daftar Dokumen Pengetahuan Terdaftar</h2>
-          <p class="card-subtitle">Dokumen berstatus Aktif akan disuntikkan secara selektif (hemat token) dan bisa dicari lewat <code>query_knowledge</code>.</p>
-        </div>
-      </div>
-
-      <div class="table-wrap">
-        <table class="data-table mobile-cards-table">
-          <thead>
-            <tr>
-              <th>Judul Dokumen</th>
-              <th>Tipe</th>
-              <th>Target Kategori</th>
-              <th>Panjang Karakter</th>
-              <th class="text-center">Status Injeksi</th>
-              <th class="text-right">Aksi</th>
-            </tr>
-          </thead>
-          <tbody id="knowledge-table-body">
-            <tr><td colspan="6" class="empty-cell">Memuat basis pengetahuan...</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-  </main>
-
-  <!-- ======================================================== -->
-  <!-- TAB 4: MANAJEMEN STIKER WHATSAPP                         -->
-  <!-- ======================================================== -->
-  <main id="view-stickers" class="main-view hidden">
-    <div class="grid-1-2">
-      <div class="card">
-        <h2 class="card-title">Unggah Stiker WhatsApp</h2>
-        <p class="card-subtitle" style="margin-bottom:12px;">Unggah berkas stiker format <code>.webp</code> asli (maksimal 10 MB). AI memilih stiker berdasarkan tag emosi.</p>
-        <form id="form-upload-sticker" class="form-stack">
-          <div class="field">
-            <label for="input-sticker-tag">Tag Emosi / Nama Stiker</label>
-            <input type="text" id="input-sticker-tag" class="input" required placeholder="Misal: ketawa, peluk, gemes, ngambek">
-          </div>
-          <div class="field">
-            <label for="input-sticker-file">Pilih File WebP</label>
-            <input type="file" id="input-sticker-file" class="input-file" required accept=".webp,image/webp">
-          </div>
-          <button type="submit" id="btn-submit-sticker" class="btn btn-primary btn-full">Simpan Stiker ke Koleksi</button>
-        </form>
-        <p class="card-footer-line">Tip: AI memiliki tool <code>get_available_stickers</code> dan <code>send_sticker</code>.</p>
-      </div>
-
-      <div class="card">
-        <div class="card-header" style="border-bottom:1px solid var(--border);padding-bottom:10px;margin-bottom:12px;">
-          <div>
-            <h2 class="card-title">Koleksi Stiker Aktif</h2>
-            <p class="card-subtitle">Daftar stiker lokal yang siap dikirim oleh agen AI.</p>
-          </div>
-          <span id="sticker-total-badge" class="pill pill-slate">0 Stiker</span>
-        </div>
-        <div id="stickers-gallery" class="stickers-grid">
-          <p class="empty-cell">Belum ada stiker di koleksi.</p>
-        </div>
-      </div>
-    </div>
-  </main>
-
-  <!-- ======================================================== -->
-  <!-- TAB 5: TRAINING ROOM & SIMULASI SANDBOX                  -->
-  <!-- ======================================================== -->
-  <main id="view-training" class="main-view hidden">
-    <div class="grid-1-2">
-      <div class="card training-sidebar">
-        <div class="form-stack">
-          <div>
-            <h2 class="card-title">Skenario Latihan AI</h2>
-            <p class="card-subtitle">Menggunakan perakit prompt yang 100% sama dengan jalur WhatsApp sungguhan.</p>
-          </div>
-          <div class="field">
-            <label for="sim-select-category">Kategori Peran Lawan Bicara</label>
-            <select id="sim-select-category" class="select"></select>
-          </div>
-          <div class="field">
-            <label for="sim-input-context">Catatan Konteks / Skenario Spesifik</label>
-            <textarea id="sim-input-context" class="textarea" rows="3" placeholder="Misal: Lawan bicara sedang kesal karena telat balas..."></textarea>
-          </div>
-          <div class="card" style="background:var(--surface-muted);padding:10px;">
-            <span class="card-kicker" style="margin-bottom:6px;display:block;">Tools Aktif di Sandbox</span>
-            <div class="tools-chips font-mono">
-              <span class="tool-chip">get_current_time</span>
-              <span class="tool-chip">get_weather</span>
-              <span class="tool-chip">web_search</span>
-              <span class="tool-chip">send_sticker</span>
-              <span class="tool-chip">query_knowledge</span>
+          <div class="status-card-body">
+            <div class="status-inset">
+              <p id="llm-model-name" class="status-metric mono truncate">-</p>
+              <p id="llm-base-url" class="status-detail mono truncate">-</p>
             </div>
           </div>
-        </div>
-        <button id="btn-reset-sim" type="button" class="btn btn-subtle btn-full" style="margin-top:12px;">Mulai Ulang Sesi</button>
-      </div>
 
-      <div class="form-stack">
-        <div class="card sandbox-panel">
-          <div class="card-header" style="border-bottom:1px solid var(--border);padding-bottom:10px;margin-bottom:10px;">
-            <span style="display:inline-flex;align-items:center;gap:8px;font-weight:700;color:var(--text);font-size:13px;">
-              <span class="dot dot-purple"></span>
-              Sandbox Percakapan (Tidak Dikirim ke WhatsApp)
-            </span>
-            <span id="sim-cat-badge" class="pill pill-purple">Pacar</span>
-          </div>
-
-          <div id="sim-messages-container" class="scroll-area chat-stream" style="margin-bottom:10px;">
-            <div class="empty-cell">Ketik pesan di bawah untuk menguji respons persona AI dalam skenario ini.</div>
-          </div>
-
-          <form id="form-simulation" class="form-stack" style="gap:8px;">
-            <div class="inline-form">
-              <input type="text" id="sim-input-message" class="input" placeholder="Ketik pesan simulasi seolah kamu lawan bicaranya...">
-              <button type="submit" id="sim-btn-send" class="btn btn-purple">Uji AI</button>
+          <div class="card-foot">
+            <span class="pill pill-outline" id="agent-tools-badge">0 Agent Tools</span>
+            <div class="actions-group">
+              <button id="btn-refresh-llm" type="button" class="btn btn-xs btn-secondary">
+                <svg class="icon icon-sm"><use href="#i-refresh"/></svg> Cek Ulang
+              </button>
+              <button id="btn-edit-llm-card" type="button" class="btn btn-xs btn-secondary">Ubah</button>
             </div>
-            <div class="card-header" style="font-size:11px;">
-              <label style="color:var(--purple-700);font-weight:600;cursor:pointer;">
-                <span>📎 Uji Kirim Stiker (Vision)</span>
-                <input type="file" id="sim-file-sticker" accept=".webp,image/webp" class="hidden">
-              </label>
-              <span id="sim-sticker-status" class="field-hint" style="margin:0;">Pilih berkas .webp untuk uji pengenalan stiker</span>
-            </div>
-          </form>
-        </div>
-
-        <div id="sim-review-panel" class="card form-stack">
-          <div class="card-header" style="border-bottom:1px solid var(--surface-subtle);padding-bottom:8px;">
-            <div>
-              <span class="card-kicker">Review & Pelatihan Mandiri AI</span>
-              <p class="card-subtitle">Tulis balasan sempurnamu, lalu minta AI menginterpretasikan pelajaran untuk Knowledge Base.</p>
-            </div>
-            <span id="sim-interpret-status" class="pill">Menunggu Sesi</span>
           </div>
+        </article>
 
-          <div id="sim-analysis-banner" class="analysis-banner hidden">
-            <strong>🧠 Refleksi Pemahaman AI:</strong>
-            <p id="sim-analysis-text" style="margin:4px 0 0;">-</p>
-          </div>
-
-          <div class="grid-2">
-            <div class="form-stack" style="gap:8px;">
-              <div class="field">
-                <label for="sim-review-corrected">1. Balasan Sempurna Versi Kamu (maks 2 balon, pisah <code>---</code>)</label>
-                <textarea id="sim-review-corrected" class="textarea" rows="4" placeholder="Tuliskan bagaimana kamu seharusnya membalas chat ini..."></textarea>
+        <!-- Kartu 3: Filter Auto-Reply -->
+        <article class="card status-card">
+          <div class="card-head">
+            <div class="card-title-group">
+              <span class="icon-badge"><svg class="icon"><use href="#i-shield"/></svg></span>
+              <div>
+                <h2 class="card-title">Filter Auto-Reply</h2>
+                <p class="card-subtitle">Kendali izin balas otomatis</p>
               </div>
-              <button type="button" id="btn-do-interpret" class="btn btn-purple btn-full">💡 Interpretasi (Minta AI Pahami Jawaban Ini)</button>
+            </div>
+            <span id="contact-count-text" class="pill pill-outline">0 Kontak</span>
+          </div>
+
+          <div class="setting-list">
+            <div class="setting-row">
+              <div>
+                <span class="setting-label">Mode Whitelist</span>
+                <p class="setting-desc">Hanya balas kontak terdaftar</p>
+              </div>
+              <button id="btn-toggle-whitelist" type="button" class="switch" aria-label="Toggle Mode Whitelist" aria-pressed="false">
+                <span class="switch-knob"></span>
+              </button>
             </div>
 
-            <div class="field">
-              <label for="sim-review-knowledge">2. Pelajaran / Fakta Baru untuk Knowledge Base</label>
-              <textarea id="sim-review-knowledge" class="textarea" rows="5" placeholder="Setelah klik Interpretasi, AI akan merumuskan pelajaran di sini..."></textarea>
-              <p class="field-hint">Bisa disunting bebas sebelum disimpan.</p>
+            <div class="setting-row">
+              <div>
+                <span class="setting-label">Balas Pesan Grup</span>
+                <p class="setting-desc">Auto-reply di grup WhatsApp</p>
+              </div>
+              <button id="btn-toggle-groups" type="button" class="switch" aria-label="Toggle Balas Pesan Grup" aria-pressed="false">
+                <span class="switch-knob"></span>
+              </button>
             </div>
           </div>
 
-          <div class="modal-footer" style="border-top:1px solid var(--surface-subtle);">
-            <button id="btn-approve-knowledge" type="button" class="btn btn-soft-purple">+ Serap ke Knowledge Base</button>
-            <button id="btn-approve-fewshot" type="button" class="btn btn-soft-emerald">+ Simpan Jadi Contoh Gaya (Few-Shot)</button>
-            <button id="btn-approve-both" type="button" class="btn btn-dark">✓ Simpan Keduanya Sekaligus</button>
+          <div class="card-foot">
+            <div class="metric-strip">
+              <span id="summary-knowledge-pill" class="pill pill-outline">0 Dokumen</span>
+              <span id="summary-stickers-pill" class="pill pill-outline">0 Stiker</span>
+            </div>
+            <span id="active-chats-count">0 Obrolan</span>
+          </div>
+        </article>
+
+      </div>
+
+      <!-- Baris 2 (DI ATAS Daftar Kontak): Ruang Percakapan & Inspektor Chat -->
+      <div class="grid-chat">
+        <article class="card chat-panel-height">
+          <div class="card-head" style="margin-bottom:10px;">
+            <div class="card-title-group">
+              <span class="icon-badge"><svg class="icon"><use href="#i-chat"/></svg></span>
+              <div>
+                <h2 class="card-title">Riwayat Percakapan</h2>
+                <p class="card-subtitle">Pilih kontak untuk membaca obrolan</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="search-wrap search-wrap-full" style="margin-bottom:10px;">
+            <svg class="icon icon-sm"><use href="#i-search"/></svg>
+            <input type="search" id="input-search-conv" class="input search-input" placeholder="Cari percakapan...">
+          </div>
+
+          <div id="conversations-list" class="scroll-area conv-list">
+            <div class="empty-state">
+              <span class="empty-state-icon"><svg class="icon icon-lg"><use href="#i-chat"/></svg></span>
+              <p class="empty-state-title">Belum ada percakapan</p>
+              <p class="empty-state-desc">Pesan masuk dan balasan AI akan muncul otomatis di sini.</p>
+            </div>
+          </div>
+        </article>
+
+        <article class="card chat-panel-height">
+          <div class="card-head" style="border-bottom:1px solid var(--border-subtle);padding-bottom:12px;margin-bottom:12px;">
+            <div class="card-title-group">
+              <span class="avatar" id="chat-header-avatar">AM</span>
+              <div style="min-width:0;">
+                <h3 id="chat-header-name" class="card-title truncate">Ruang Percakapan</h3>
+                <p id="chat-header-meta" class="card-subtitle">Inspeksi balasan AI, pesan manual, dan perintah.</p>
+              </div>
+            </div>
+            <div class="actions-group">
+              <span id="chat-header-badge" class="pill hidden"></span>
+              <button id="btn-clear-chat" type="button" class="btn btn-xs btn-danger-ghost hidden">
+                <svg class="icon icon-sm"><use href="#i-trash"/></svg> Hapus History
+              </button>
+            </div>
+          </div>
+
+          <div id="chat-messages-container" class="scroll-area chat-stream">
+            <div class="empty-state">
+              <span class="empty-state-icon"><svg class="icon icon-xl"><use href="#i-chat"/></svg></span>
+              <p class="empty-state-title">Belum ada percakapan dipilih</p>
+              <p class="empty-state-desc">Pilih salah satu kontak dari daftar percakapan untuk melihat riwayat pesan dan balasan AI.</p>
+            </div>
+          </div>
+        </article>
+      </div>
+
+      <!-- Baris 3 (DI BAWAH Ruang Percakapan): Daftar Kontak & Persona -->
+      <article class="card card-flush">
+        <div class="card-head card-head-padded">
+          <div class="card-title-group">
+            <span class="icon-badge"><svg class="icon"><use href="#i-users"/></svg></span>
+            <div>
+              <h2 class="card-title">Daftar Kontak & Persona</h2>
+              <p class="card-subtitle">Kelola kategori relasi, status Jabber Identifier (JID), dan izin balas otomatis per kontak.</p>
+            </div>
+          </div>
+          <button id="btn-add-contact" type="button" class="btn btn-primary">
+            <svg class="icon icon-sm"><use href="#i-plus"/></svg> Tambah Kontak
+          </button>
+        </div>
+
+        <div class="toolbar">
+          <div class="search-wrap">
+            <svg class="icon icon-sm"><use href="#i-search"/></svg>
+            <input type="search" id="input-search-contacts" class="input search-input" placeholder="Cari nama, nomor, atau catatan kontak...">
+          </div>
+          <div id="contacts-filter-pills" class="filter-pills"></div>
+        </div>
+
+        <div class="table-wrap desktop-table-only">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Kontak</th>
+                <th>Nomor / ID (LID)</th>
+                <th>Kategori</th>
+                <th>Catatan Persona</th>
+                <th class="text-center">Status AI</th>
+                <th class="text-right">Aksi</th>
+              </tr>
+            </thead>
+            <tbody id="contacts-table-body">
+              <tr><td colspan="6" class="empty-row">Memuat data kontak...</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div id="contacts-mobile-list" class="mobile-card-list"></div>
+      </article>
+
+      <!-- Baris 4: Grid 2 Kolom Seimbang (Kirim Pesan Manual 5fr | Log Aktivitas 7fr) -->
+      <div class="grid-bento-bottom">
+        <article class="card">
+          <div class="card-head" style="margin-bottom:14px;">
+            <div class="card-title-group">
+              <span class="icon-badge icon-badge-accent"><svg class="icon"><use href="#i-send"/></svg></span>
+              <div>
+                <h2 class="card-title">Kirim Pesan Manual</h2>
+                <p class="card-subtitle">Kirim langsung atas nama akun ini (pisah multi-balon dengan <code>---</code>).</p>
+              </div>
+            </div>
+          </div>
+
+          <form id="form-manual-send" class="form-stack">
+            <div class="field">
+              <label for="select-manual-contact">Pilih Kontak Terdaftar</label>
+              <select id="select-manual-contact" class="select">
+                <option value="">Ketik nomor manual di bawah atau pilih kontak...</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="input-manual-phone">Nomor Tujuan atau ID Kontak</label>
+              <input type="text" id="input-manual-phone" class="input mono" required placeholder="Misal: 62812... atau angka ID kontak">
+              <p id="manual-route-hint" class="field-hint">Mengirim ke nomor tujuan secara langsung.</p>
+            </div>
+            <div class="field">
+              <label for="input-manual-message">Isi Pesan</label>
+              <textarea id="input-manual-message" class="textarea" rows="3" required placeholder="Tulis pesan yang ingin dikirim..."></textarea>
+            </div>
+            <button type="submit" id="btn-manual-send" class="btn btn-primary btn-full">
+              <svg class="icon icon-sm"><use href="#i-send"/></svg> Kirim via WhatsApp
+            </button>
+            <p id="manual-send-status" class="field-hint"></p>
+          </form>
+        </article>
+
+        <article class="card">
+          <div class="card-head" style="margin-bottom:10px;">
+            <div class="card-title-group">
+              <span class="icon-badge"><svg class="icon"><use href="#i-terminal"/></svg></span>
+              <div>
+                <h2 class="card-title">Log Aktivitas Layanan</h2>
+                <p class="card-subtitle">Pantau pesan masuk, pemanggilan tool, dan galat sistem.</p>
+              </div>
+            </div>
+            <button id="btn-refresh-logs" type="button" class="btn btn-xs btn-secondary">
+              <svg class="icon icon-sm"><use href="#i-refresh"/></svg> Segarkan
+            </button>
+          </div>
+
+          <div id="logs-filter-pills" class="filter-pills" style="margin-bottom:10px;">
+            <button type="button" class="filter-chip is-active" data-log-filter="all">Semua</button>
+            <button type="button" class="filter-chip" data-log-filter="chat">Pesan</button>
+            <button type="button" class="filter-chip" data-log-filter="tool">Tool</button>
+            <button type="button" class="filter-chip" data-log-filter="error">Galat</button>
+          </div>
+
+          <div id="logs-container" class="logs-box">
+            <p class="field-hint" style="margin:0;">Belum ada aktivitas baru.</p>
+          </div>
+        </article>
+      </div>
+
+    </section>
+
+    <!-- ======================================================== -->
+    <!-- TAB 2: KUSTOM PERSONA & ATURAN GAYA KETIK                -->
+    <!-- ======================================================== -->
+    <section id="view-persona" class="tab-panel hidden" aria-label="Kustom Persona">
+      <article class="card">
+        <div class="card-head" style="margin-bottom:16px;">
+          <div class="card-title-group">
+            <span class="icon-badge icon-badge-accent"><svg class="icon"><use href="#i-user"/></svg></span>
+            <div>
+              <h2 class="card-title">Identitas & Gaya Pengetikan Umum</h2>
+              <p class="card-subtitle">Diterapkan ke seluruh balasan otomatis untuk semua kategori kontak.</p>
+            </div>
+          </div>
+          <button id="btn-save-general-persona" type="button" class="btn btn-primary">Simpan Aturan Umum</button>
+        </div>
+
+        <div class="grid-2">
+          <div class="field">
+            <label for="input-general-identity">Definisi Identitas AI</label>
+            <textarea id="input-general-identity" class="textarea" rows="6"></textarea>
+            <p class="field-hint">Menjelaskan peran dasar bot sebagai perwakilan digital pribadimu.</p>
+          </div>
+          <div class="field">
+            <label for="input-general-rules">Aturan Gaya Ketik (Satu aturan per baris)</label>
+            <textarea id="input-general-rules" class="textarea" rows="6"></textarea>
+            <p class="field-hint">Gunakan bahasa alami; aturan huruf kapital awal dan batas 2 balon ikut ditegakkan otomatis.</p>
           </div>
         </div>
+      </article>
+
+      <article class="card">
+        <div class="card-head" style="margin-bottom:16px;">
+          <div class="card-title-group">
+            <span class="icon-badge"><svg class="icon"><use href="#i-spark"/></svg></span>
+            <div>
+              <h2 class="card-title">Kategori Persona Relasi</h2>
+              <p class="card-subtitle">Atur nada bicara, kosakata panggilan, panduan perilaku, dan contoh dialog per hubungan.</p>
+            </div>
+          </div>
+          <button id="btn-add-category" type="button" class="btn btn-primary">
+            <svg class="icon icon-sm"><use href="#i-plus"/></svg> Tambah Kategori
+          </button>
+        </div>
+
+        <div id="persona-categories-grid" class="grid-cards-3"></div>
+      </article>
+    </section>
+
+    <!-- ======================================================== -->
+    <!-- TAB 3: KNOWLEDGE BASE                                    -->
+    <!-- ======================================================== -->
+    <section id="view-knowledge" class="tab-panel hidden" aria-label="Knowledge Base">
+      <div class="grid-2-start">
+        <article class="card">
+          <div class="card-head" style="margin-bottom:14px;">
+            <div class="card-title-group">
+              <span class="icon-badge icon-badge-accent"><svg class="icon"><use href="#i-upload"/></svg></span>
+              <div>
+                <h2 class="card-title">Unggah Dokumen Pengetahuan</h2>
+                <p class="card-subtitle">Mendukung <code>.txt</code>, <code>.md</code>, <code>.pdf</code>, <code>.docx</code>, <code>.json</code>, <code>.csv</code> (maks 10 MB).</p>
+              </div>
+            </div>
+          </div>
+
+          <form id="form-upload-doc" class="form-stack">
+            <div class="field">
+              <label for="input-doc-title">Judul Dokumen</label>
+              <input type="text" id="input-doc-title" class="input" required placeholder="Misal: Jadwal Kuliah Semester 5">
+            </div>
+            <div class="field">
+              <label for="select-doc-category">Kategori Sasaran</label>
+              <select id="select-doc-category" class="select"></select>
+              <p class="field-hint">Kategori Universal dapat diakses seluruh kontak aktif.</p>
+            </div>
+            <div class="field">
+              <label>Berkas Dokumen</label>
+              <label class="dropzone" id="doc-dropzone">
+                <input type="file" id="input-doc-file" required accept=".txt,.md,.pdf,.docx,.json,.csv">
+                <svg class="icon icon-lg" style="color:var(--ink-muted);"><use href="#i-file"/></svg>
+                <span class="dropzone-title">Klik atau seret berkas ke sini</span>
+                <span class="dropzone-sub">Teks akan diekstrak otomatis ke basis pengetahuan</span>
+                <span id="doc-dropzone-file" class="dropzone-file truncate hidden"></span>
+              </label>
+            </div>
+            <button type="submit" id="btn-submit-upload" class="btn btn-primary btn-full">Ekstrak & Simpan Dokumen</button>
+          </form>
+        </article>
+
+        <article class="card">
+          <div class="card-head" style="margin-bottom:14px;">
+            <div class="card-title-group">
+              <span class="icon-badge"><svg class="icon"><use href="#i-book"/></svg></span>
+              <div>
+                <h2 class="card-title">Catatan Faktual Langsung (Snippet)</h2>
+                <p class="card-subtitle">Tambahkan fakta singkat tanpa perlu membuat berkas terpisah.</p>
+              </div>
+            </div>
+          </div>
+
+          <form id="form-snippet" class="form-stack">
+            <div class="field">
+              <label for="input-snippet-title">Judul Catatan</label>
+              <input type="text" id="input-snippet-title" class="input" required placeholder="Misal: Jadwal Rutin, Hobi, Preferensi">
+            </div>
+            <div class="field">
+              <label for="select-snippet-category">Kategori Sasaran</label>
+              <select id="select-snippet-category" class="select"></select>
+              <p class="field-hint">Kategori Universal dapat diakses seluruh kontak aktif.</p>
+            </div>
+            <div class="field">
+              <label for="input-snippet-content">Isi Informasi Faktual</label>
+              <textarea id="input-snippet-content" class="textarea" rows="4" required placeholder="Tuliskan fakta penting di sini..."></textarea>
+            </div>
+            <button type="submit" class="btn btn-primary btn-full">Simpan Catatan Faktual</button>
+          </form>
+        </article>
       </div>
-    </div>
+
+      <article class="card card-flush">
+        <div class="card-head card-head-padded">
+          <div class="card-title-group">
+            <span class="icon-badge"><svg class="icon"><use href="#i-file"/></svg></span>
+            <div>
+              <h2 class="card-title">Daftar Dokumen Pengetahuan</h2>
+              <p class="card-subtitle">Dokumen berstatus Aktif disuntikkan selektif sesuai relevansi dan bisa dicari oleh agent.</p>
+            </div>
+          </div>
+          <span id="knowledge-count-badge" class="pill pill-outline">0 Dokumen</span>
+        </div>
+
+        <div class="toolbar">
+          <div class="search-wrap">
+            <svg class="icon icon-sm"><use href="#i-search"/></svg>
+            <input type="search" id="input-search-knowledge" class="input search-input" placeholder="Cari judul dokumen atau catatan...">
+          </div>
+          <div id="knowledge-filter-pills" class="filter-pills"></div>
+        </div>
+
+        <div class="table-wrap desktop-table-only">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Judul Dokumen</th>
+                <th>Tipe</th>
+                <th>Target Kategori</th>
+                <th>Panjang</th>
+                <th class="text-center">Status</th>
+                <th class="text-right">Aksi</th>
+              </tr>
+            </thead>
+            <tbody id="knowledge-table-body">
+              <tr><td colspan="6" class="empty-row">Memuat basis pengetahuan...</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div id="knowledge-mobile-list" class="mobile-card-list"></div>
+      </article>
+    </section>
+
+    <!-- ======================================================== -->
+    <!-- TAB 4: STIKER WHATSAPP                                   -->
+    <!-- ======================================================== -->
+    <section id="view-stickers" class="tab-panel hidden" aria-label="Stiker WhatsApp">
+      <div class="grid-sidebar-start">
+        <article class="card">
+          <div class="card-head" style="margin-bottom:14px;">
+            <div class="card-title-group">
+              <span class="icon-badge icon-badge-accent"><svg class="icon"><use href="#i-upload"/></svg></span>
+              <div>
+                <h2 class="card-title">Unggah Stiker WhatsApp</h2>
+                <p class="card-subtitle">Gunakan berkas gambar <code>.webp</code> asli (maks 10 MB).</p>
+              </div>
+            </div>
+          </div>
+
+          <form id="form-upload-sticker" class="form-stack">
+            <div class="field">
+              <label for="input-sticker-tag">Tag Emosi / Nama Stiker</label>
+              <input type="text" id="input-sticker-tag" class="input" required placeholder="Misal: ketawa, peluk, gemes, ngambek">
+            </div>
+            <div class="field">
+              <label>Berkas Stiker (.webp)</label>
+              <label class="dropzone" id="sticker-dropzone">
+                <input type="file" id="input-sticker-file" required accept=".webp,image/webp">
+                <img id="sticker-upload-preview" class="sticker-preview-img hidden" alt="Pratinjau stiker">
+                <svg id="sticker-dropzone-icon" class="icon icon-lg" style="color:var(--ink-muted);"><use href="#i-smile"/></svg>
+                <span class="dropzone-title">Pilih berkas .webp</span>
+                <span id="sticker-dropzone-file" class="dropzone-file truncate hidden"></span>
+              </label>
+            </div>
+            <button type="submit" id="btn-submit-sticker" class="btn btn-primary btn-full">Simpan Stiker ke Koleksi</button>
+          </form>
+
+          <p class="card-foot" style="margin-top:14px;">AI memilih stiker secara otomatis sesuai konteks percakapan berdasarkan tag emosi.</p>
+        </article>
+
+        <article class="card">
+          <div class="card-head" style="border-bottom:1px solid var(--border-subtle);padding-bottom:12px;margin-bottom:12px;">
+            <div class="card-title-group">
+              <span class="icon-badge"><svg class="icon"><use href="#i-smile"/></svg></span>
+              <div>
+                <h2 class="card-title">Koleksi Stiker Aktif</h2>
+                <p class="card-subtitle">Stiker lokal yang siap dikirim otomatis oleh agen AI.</p>
+              </div>
+            </div>
+            <span id="sticker-total-badge" class="pill pill-outline">0 Stiker</span>
+          </div>
+
+          <div class="search-wrap search-wrap-full" style="margin-bottom:12px;">
+            <svg class="icon icon-sm"><use href="#i-search"/></svg>
+            <input type="search" id="input-search-stickers" class="input search-input" placeholder="Cari tag stiker...">
+          </div>
+
+          <div id="stickers-gallery" class="stickers-grid">
+            <div class="empty-state" style="grid-column:1/-1;">
+              <span class="empty-state-icon"><svg class="icon icon-lg"><use href="#i-smile"/></svg></span>
+              <p class="empty-state-title">Belum ada stiker</p>
+              <p class="empty-state-desc">Unggah berkas .webp untuk mulai melengkapi ekspresi bot.</p>
+            </div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <!-- ======================================================== -->
+    <!-- TAB 5: TRAINING ROOM & SANDBOX                           -->
+    <!-- ======================================================== -->
+    <section id="view-training" class="tab-panel hidden" aria-label="Training Room">
+      <div class="grid-sidebar-start">
+        <article class="card">
+          <div class="card-head" style="margin-bottom:14px;">
+            <div class="card-title-group">
+              <span class="icon-badge"><svg class="icon"><use href="#i-flask"/></svg></span>
+              <div>
+                <h2 class="card-title">Skenario Latihan AI</h2>
+                <p class="card-subtitle">Prompt 100% identik dengan WhatsApp, tanpa mengirim pesan asli.</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="form-stack">
+            <div class="field">
+              <label for="sim-select-category">Kategori Lawan Bicara</label>
+              <select id="sim-select-category" class="select"></select>
+            </div>
+            <div class="field">
+              <label for="sim-input-context">Catatan Skenario (Opsional)</label>
+              <textarea id="sim-input-context" class="textarea" rows="3" placeholder="Misal: Lawan bicara sedang kesal karena telat membalas..."></textarea>
+            </div>
+            <div class="field">
+              <label>Tools Aktif di Sandbox</label>
+              <div class="tools-chips mono">
+                <span class="tool-chip">get_current_time</span>
+                <span class="tool-chip">get_weather</span>
+                <span class="tool-chip">web_search</span>
+                <span class="tool-chip">send_sticker</span>
+                <span class="tool-chip">query_knowledge</span>
+              </div>
+            </div>
+            <button id="btn-reset-sim" type="button" class="btn btn-secondary btn-full">
+              <svg class="icon icon-sm"><use href="#i-refresh"/></svg> Mulai Ulang Sesi
+            </button>
+          </div>
+        </article>
+
+        <div class="form-stack" style="gap:16px;">
+          <article class="card sandbox-panel">
+            <div class="card-head" style="border-bottom:1px solid var(--border-subtle);padding-bottom:12px;margin-bottom:12px;">
+              <div class="inline-row">
+                <span class="pill pill-solid"><svg class="icon icon-sm"><use href="#i-flask"/></svg> Mode Sandbox</span>
+                <span class="card-subtitle" style="margin:0;">Tidak dikirim ke WhatsApp</span>
+              </div>
+              <span id="sim-cat-badge" class="pill pill-outline">Pacar</span>
+            </div>
+
+            <div id="sim-messages-container" class="scroll-area chat-stream" style="margin-bottom:12px;">
+              <div class="empty-state">
+                <span class="empty-state-icon"><svg class="icon icon-xl"><use href="#i-flask"/></svg></span>
+                <p class="empty-state-title">Siap menguji persona</p>
+                <p class="empty-state-desc">Ketik pesan di bawah seolah kamu adalah lawan bicaranya untuk melihat respons AI.</p>
+              </div>
+            </div>
+
+            <form id="form-simulation" class="form-stack" style="gap:8px;">
+              <div class="inline-row inline-row-stack-mobile">
+                <input type="text" id="sim-input-message" class="input" placeholder="Ketik pesan simulasi di sini...">
+                <button type="submit" id="sim-btn-send" class="btn btn-primary">
+                  <svg class="icon icon-sm"><use href="#i-send"/></svg> Uji AI
+                </button>
+              </div>
+              <div class="card-head" style="align-items:center;">
+                <label class="btn btn-xs btn-secondary" style="cursor:pointer;">
+                  <svg class="icon icon-sm"><use href="#i-smile"/></svg> Uji Kirim Stiker (.webp)
+                  <input type="file" id="sim-file-sticker" accept=".webp,image/webp" class="hidden">
+                </label>
+                <span id="sim-sticker-status" class="field-hint" style="margin:0;">Uji kemampuan vision mengenali stiker</span>
+              </div>
+            </form>
+          </article>
+
+          <article id="sim-review-panel" class="card form-stack">
+            <div class="card-head" style="border-bottom:1px solid var(--border-subtle);padding-bottom:10px;">
+              <div>
+                <h2 class="card-title">Review & Pelatihan Mandiri AI</h2>
+                <p class="card-subtitle">Koreksi balasan AI, minta AI merumuskan pelajaran, lalu simpan ke persona atau pengetahuan.</p>
+              </div>
+              <span id="sim-interpret-status" class="pill pill-outline">Menunggu Sesi</span>
+            </div>
+
+            <div id="sim-analysis-banner" class="analysis-banner hidden">
+              <strong style="display:block;margin-bottom:2px;">Refleksi Pemahaman AI</strong>
+              <p id="sim-analysis-text" style="margin:0;">-</p>
+            </div>
+
+            <div class="grid-2">
+              <div class="form-stack" style="gap:8px;">
+                <div class="field">
+                  <label for="sim-review-corrected">1. Balasan Sempurna Versi Kamu</label>
+                  <textarea id="sim-review-corrected" class="textarea" rows="4" placeholder="Tulis balasan ideal (pisah maksimal 2 balon dengan ---)"></textarea>
+                </div>
+                <button type="button" id="btn-do-interpret" class="btn btn-secondary btn-full">
+                  <svg class="icon icon-sm"><use href="#i-spark"/></svg> Interpretasi Jawaban Ini
+                </button>
+              </div>
+
+              <div class="field">
+                <label for="sim-review-knowledge">2. Pelajaran Baru untuk Knowledge Base</label>
+                <textarea id="sim-review-knowledge" class="textarea" rows="4" placeholder="Otomatis terisi setelah klik Interpretasi, bisa diedit bebas..."></textarea>
+                <p class="field-hint">Fakta atau preferensi yang tersirat akan diserap ke basis pengetahuan kategori terpilih.</p>
+              </div>
+            </div>
+
+            <div class="review-actions">
+              <button id="btn-approve-knowledge" type="button" class="btn btn-secondary">+ Serap ke Knowledge Base</button>
+              <button id="btn-approve-fewshot" type="button" class="btn btn-secondary">+ Simpan ke Few-Shot</button>
+              <button id="btn-approve-both" type="button" class="btn btn-primary">Simpan Keduanya Sekaligus</button>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
   </main>
 
   <!-- ======================================================== -->
-  <!-- MODAL: EDIT / TAMBAH KATEGORI PERSONA (VISUAL FEW-SHOT)  -->
+  <!-- MODAL 1: EDIT / TAMBAH KATEGORI PERSONA                  -->
   <!-- ======================================================== -->
-  <div id="modal-category" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+  <div id="modal-category" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="modal-category-title">
     <div class="modal-dialog modal-dialog-wide">
       <div class="modal-header">
         <h3 id="modal-category-title" class="card-title">Edit Kategori Persona</h3>
-        <button type="button" class="modal-close" data-close-modal="modal-category" aria-label="Tutup">&times;</button>
+        <button type="button" class="modal-close" data-close-modal="modal-category" aria-label="Tutup">
+          <svg class="icon"><use href="#i-close"/></svg>
+        </button>
       </div>
       <form id="form-category" class="form-stack">
         <div class="field">
-          <label for="input-cat-key">Key / ID Kategori (contoh: sahabat, rekan_kerja)</label>
-          <input type="text" id="input-cat-key" class="input font-mono" required placeholder="kategori_kustom">
+          <label for="input-cat-key">ID Kategori (contoh: sahabat, rekan_kerja)</label>
+          <input type="text" id="input-cat-key" class="input mono" required placeholder="kategori_kustom">
         </div>
         <div class="field">
-          <label for="input-cat-tone">Nada Bicara / Sikap (Tone)</label>
-          <input type="text" id="input-cat-tone" class="input" required placeholder="Santai, penuh perhatian, langsung ke inti">
+          <label for="input-cat-tone">Nada Bicara / Sikap</label>
+          <input type="text" id="input-cat-tone" class="input" required placeholder="Santai, hangat, langsung ke inti">
         </div>
         <div class="field">
           <label for="input-cat-vocab">Kosakata / Panggilan Khas (pisahkan dengan koma)</label>
           <input type="text" id="input-cat-vocab" class="input" placeholder="bro, lu, gua, siap, aman">
         </div>
         <div class="field">
-          <label for="input-cat-guidelines">Panduan Perilaku (Guidelines)</label>
+          <label for="input-cat-guidelines">Panduan Perilaku</label>
           <textarea id="input-cat-guidelines" class="textarea" rows="2"></textarea>
         </div>
 
         <div class="field">
-          <div class="card-header" style="margin-bottom:6px;">
-            <label style="margin:0;">Contoh Percakapan Nyata (Few-Shot Editor Visual)</label>
-            <button id="btn-add-fewshot-row" type="button" class="btn btn-sm btn-soft-emerald">+ Tambah Contoh</button>
+          <div class="card-head" style="margin-bottom:6px;align-items:center;">
+            <label style="margin:0;">Contoh Percakapan Nyata (Few-Shot)</label>
+            <button id="btn-add-fewshot-row" type="button" class="btn btn-xs btn-secondary">
+              <svg class="icon icon-sm"><use href="#i-plus"/></svg> Tambah Baris
+            </button>
           </div>
           <div id="fewshot-editor-list" class="fewshot-list"></div>
-          <p class="field-hint">Pisahkan multi-balon (maks 2 balon) di kolom Balasan dengan baris baru <code>---</code>.</p>
+          <p class="field-hint">Pisahkan 2 balon di kolom Balasan dengan baris <code>---</code>.</p>
         </div>
 
         <div class="modal-footer">
-          <button type="button" class="btn btn-subtle" data-close-modal="modal-category">Batal</button>
+          <button type="button" class="btn btn-secondary" data-close-modal="modal-category">Batal</button>
           <button type="submit" class="btn btn-primary">Simpan Kategori</button>
         </div>
       </form>
@@ -538,30 +818,34 @@
   </div>
 
   <!-- ======================================================== -->
-  <!-- MODAL: LIHAT & EDIT DOKUMEN KNOWLEDGE BASE               -->
+  <!-- MODAL 2: LIHAT & EDIT DOKUMEN KNOWLEDGE BASE             -->
   <!-- ======================================================== -->
-  <div id="modal-knowledge-edit" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+  <div id="modal-knowledge-edit" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="modal-kb-title">
     <div class="modal-dialog modal-dialog-wide">
       <div class="modal-header">
-        <h3 class="card-title">Lihat & Edit Dokumen Pengetahuan</h3>
-        <button type="button" class="modal-close" data-close-modal="modal-knowledge-edit" aria-label="Tutup">&times;</button>
+        <h3 id="modal-kb-title" class="card-title">Lihat & Edit Dokumen Pengetahuan</h3>
+        <button type="button" class="modal-close" data-close-modal="modal-knowledge-edit" aria-label="Tutup">
+          <svg class="icon"><use href="#i-close"/></svg>
+        </button>
       </div>
       <form id="form-knowledge-edit" class="form-stack">
         <input type="hidden" id="input-edit-doc-id">
-        <div class="field">
-          <label for="input-edit-doc-title">Judul Dokumen</label>
-          <input type="text" id="input-edit-doc-title" class="input" required>
-        </div>
-        <div class="field">
-          <label for="input-edit-doc-category">Kategori Sasaran</label>
-          <select id="input-edit-doc-category" class="select"></select>
+        <div class="grid-2">
+          <div class="field">
+            <label for="input-edit-doc-title">Judul Dokumen</label>
+            <input type="text" id="input-edit-doc-title" class="input" required>
+          </div>
+          <div class="field">
+            <label for="input-edit-doc-category">Kategori Sasaran</label>
+            <select id="input-edit-doc-category" class="select"></select>
+          </div>
         </div>
         <div class="field">
           <label for="input-edit-doc-content">Isi Teks Dokumen</label>
-          <textarea id="input-edit-doc-content" class="textarea font-mono" rows="10" required></textarea>
+          <textarea id="input-edit-doc-content" class="textarea" rows="10" required></textarea>
         </div>
         <div class="modal-footer">
-          <button type="button" class="btn btn-subtle" data-close-modal="modal-knowledge-edit">Batal</button>
+          <button type="button" class="btn btn-secondary" data-close-modal="modal-knowledge-edit">Batal</button>
           <button type="submit" class="btn btn-primary">Simpan Perubahan</button>
         </div>
       </form>
@@ -569,55 +853,70 @@
   </div>
 
   <!-- ======================================================== -->
-  <!-- MODAL: KONFIGURASI LLM UNIVERSAL                         -->
+  <!-- MODAL 3: KONFIGURASI LLM UNIVERSAL                       -->
   <!-- ======================================================== -->
-  <div id="modal-llm" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+  <div id="modal-llm" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="modal-llm-title">
     <div class="modal-dialog">
       <div class="modal-header">
-        <h3 class="card-title">Konfigurasi Model LLM</h3>
-        <button type="button" class="modal-close" data-close-modal="modal-llm" aria-label="Tutup">&times;</button>
+        <h3 id="modal-llm-title" class="card-title">Konfigurasi Model LLM</h3>
+        <button type="button" class="modal-close" data-close-modal="modal-llm" aria-label="Tutup">
+          <svg class="icon"><use href="#i-close"/></svg>
+        </button>
       </div>
       <form id="form-llm" class="form-stack">
-        <p id="llm-locked-notice" class="field-hint hidden" style="color:var(--amber-700);font-weight:600;">Konfigurasi LLM sedang dikunci oleh variabel lingkungan LOCK_LLM_CONFIG.</p>
+        <p id="llm-locked-notice" class="field-hint hidden" style="color:var(--ink);font-weight:600;">Konfigurasi LLM dikunci oleh variabel lingkungan LOCK_LLM_CONFIG.</p>
         <div class="field">
           <label for="input-llm-baseurl">Base URL Endpoint</label>
-          <input type="url" id="input-llm-baseurl" class="input font-mono" required placeholder="http://127.0.0.1:4000/v1beta/openai">
+          <input type="url" id="input-llm-baseurl" class="input mono" required placeholder="http://127.0.0.1:4000/v1beta/openai">
         </div>
         <div class="field">
           <label for="input-llm-model">Nama Model Chat (Utama)</label>
-          <input type="text" id="input-llm-model" class="input font-mono" required placeholder="gemma-4-26b-a4b-it">
+          <input type="text" id="input-llm-model" class="input mono" required placeholder="gemma-4-26b-a4b-it">
         </div>
         <div class="field">
           <label for="input-llm-vision-model">Nama Model Khusus Vision (Opsional)</label>
-          <input type="text" id="input-llm-vision-model" class="input font-mono" placeholder="Kosongkan jika memakai model yang sama">
+          <input type="text" id="input-llm-vision-model" class="input mono" placeholder="Kosongkan jika memakai model yang sama">
         </div>
         <div class="field">
           <label for="input-llm-apikey">API Key (Opsional)</label>
-          <input type="password" id="input-llm-apikey" class="input font-mono" placeholder="Kosongkan jika memakai proksi lokal">
-          <p class="field-hint">Demi keamanan, mengubah host Base URL akan mengosongkan API Key lama secara otomatis.</p>
+          <div class="input-password-wrap">
+            <input type="password" id="input-llm-apikey" class="input mono" placeholder="Kosongkan jika memakai proksi lokal">
+            <button type="button" id="btn-toggle-apikey-vis" class="input-eye-btn" aria-label="Lihat atau sembunyikan API Key">
+              <svg class="icon icon-sm" id="apikey-eye-icon"><use href="#i-eye"/></svg>
+            </button>
+          </div>
+          <p class="field-hint">Mengubah host Base URL otomatis mengosongkan API Key lama demi keamanan.</p>
         </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-subtle" data-close-modal="modal-llm">Batal</button>
-          <button type="submit" id="btn-save-llm" class="btn btn-primary">Simpan</button>
+        <p id="llm-test-result" class="field-hint hidden"></p>
+        <div class="modal-footer modal-footer-split">
+          <button type="button" id="btn-test-llm-conn" class="btn btn-sm btn-secondary">
+            <svg class="icon icon-sm"><use href="#i-refresh"/></svg> Tes Koneksi
+          </button>
+          <div class="actions-group">
+            <button type="button" class="btn btn-secondary" data-close-modal="modal-llm">Batal</button>
+            <button type="submit" id="btn-save-llm" class="btn btn-primary">Simpan</button>
+          </div>
         </div>
       </form>
     </div>
   </div>
 
   <!-- ======================================================== -->
-  <!-- MODAL: TAMBAH / EDIT KONTAK                              -->
+  <!-- MODAL 4: TAMBAH / EDIT KONTAK                            -->
   <!-- ======================================================== -->
-  <div id="modal-contact" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+  <div id="modal-contact" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
     <div class="modal-dialog">
       <div class="modal-header">
         <h3 id="modal-title" class="card-title">Tambah Kontak Baru</h3>
-        <button type="button" class="modal-close" data-close-modal="modal-contact" aria-label="Tutup">&times;</button>
+        <button type="button" class="modal-close" data-close-modal="modal-contact" aria-label="Tutup">
+          <svg class="icon"><use href="#i-close"/></svg>
+        </button>
       </div>
       <form id="form-contact" class="form-stack">
         <input type="hidden" id="input-old-phone" value="">
         <div class="field">
           <label for="input-phone">Nomor WhatsApp / ID Kontak (LID)</label>
-          <input type="text" id="input-phone" class="input font-mono" required placeholder="628xxxxxxxxxx atau angka LID">
+          <input type="text" id="input-phone" class="input mono" required placeholder="628xxxxxxxxxx atau angka LID">
         </div>
         <div class="field">
           <label for="input-name">Nama Kontak</label>
@@ -629,41 +928,54 @@
         </div>
         <div class="field">
           <label for="input-notes">Catatan Khusus Persona (Opsional)</label>
-          <textarea id="input-notes" class="textarea" rows="2" placeholder="Petunjuk khusus kepribadian saat chat..."></textarea>
+          <textarea id="input-notes" class="textarea" rows="2" placeholder="Petunjuk khusus gaya bicara saat chat..."></textarea>
         </div>
         <label class="checkbox-row">
           <input type="checkbox" id="check-enabled" checked>
           <span>Izinkan AI otomatis membalas kontak ini</span>
         </label>
         <div class="modal-footer">
-          <button type="button" class="btn btn-subtle" data-close-modal="modal-contact">Batal</button>
+          <button type="button" class="btn btn-secondary" data-close-modal="modal-contact">Batal</button>
           <button type="submit" class="btn btn-primary">Simpan</button>
         </div>
       </form>
     </div>
   </div>
 
-  <!-- Toast Container -->
+  <!-- Toast Notifications -->
   <div id="toast-container" class="toast-container" aria-live="polite"></div>
 
   <script>
     'use strict';
 
     // ==========================================
-    // STATE & SECURITY HELPERS (XSS-PROOF)
+    // STATE & XSS-SAFE HELPERS
     // ==========================================
     let currentContacts = {};
     let currentContactMeta = {};
+    let currentConversations = [];
+    let currentLogs = [];
     let currentLLMConfig = {};
     let currentPersona = { general_persona: {}, categories: {} };
     let currentKnowledge = [];
+    let currentStickers = [];
+
     let selectedChatPhone = null;
     let selectedManualContact = '';
     let activeTab = 'dashboard';
 
+    let contactSearch = '';
+    let contactCategoryFilter = 'all';
+    let convSearch = '';
+    let knowledgeSearch = '';
+    let knowledgeCategoryFilter = 'all';
+    let stickerSearch = '';
+    let logFilter = 'all';
+
     let simHistory = [];
     let lastSimUserMessage = '';
     let lastSimAIMessage = '';
+    let stickerPreviewObjectUrl = null;
 
     function escapeHtml(value) {
       return String(value ?? '')
@@ -674,16 +986,21 @@
         .replace(/'/g, '&#39;');
     }
 
+    function getInitials(name) {
+      const parts = String(name || '?').trim().split(/\s+/).filter(Boolean);
+      if (parts.length === 0) return '?';
+      if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+      return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+    }
+
     function showToast(message, type = 'info') {
       const container = document.getElementById('toast-container');
       if (!container) return;
       const el = document.createElement('div');
-      el.className = `toast toast-${type}`;
+      el.className = `toast ${type === 'success' ? 'toast-success' : type === 'error' ? 'toast-error' : ''}`;
       el.textContent = String(message || '');
       container.appendChild(el);
-      setTimeout(() => {
-        el.remove();
-      }, 3600);
+      setTimeout(() => el.remove(), 3500);
     }
 
     function openModal(id) {
@@ -719,33 +1036,44 @@
 
     function renderJidBadge(meta) {
       if (!meta || !meta.hasStoredJid) {
-        return '<span class="pill pill-amber" title="Belum ada pesan masuk sehingga JID belum terekam">JID belum terekam</span>';
+        return '<span class="pill pill-outline" title="Belum ada pesan masuk sehingga JID belum terekam">JID belum terekam</span>';
       }
       if (meta.jidType === 'lid') {
-        return '<span class="pill pill-blue" title="WhatsApp Linked Identity (@lid)">LID</span>';
+        return '<span class="pill" title="WhatsApp Linked Identity (@lid)">LID</span>';
       }
       if (meta.jidType === 'pn') {
-        return '<span class="pill pill-emerald" title="Nomor WhatsApp standar (@s.whatsapp.net)">WA</span>';
+        return '<span class="pill pill-accent" title="Nomor WhatsApp standar (@s.whatsapp.net)">WA</span>';
       }
-      return '<span class="pill pill-slate">JID</span>';
+      return '<span class="pill">JID</span>';
     }
 
     // ==========================================
-    // NAVIGATION & TABS
+    // NAVIGATION & MOBILE DRAWER
     // ==========================================
+    function setMobileDrawer(open) {
+      const menu = document.getElementById('mobile-nav-menu');
+      const backdrop = document.getElementById('mobile-nav-backdrop');
+      const toggle = document.getElementById('mobile-nav-toggle');
+      const iconUse = document.querySelector('#mobile-nav-icon use');
+      menu?.classList.toggle('is-open', open);
+      backdrop?.classList.toggle('hidden', !open);
+      toggle?.setAttribute('aria-expanded', String(open));
+      if (iconUse) iconUse.setAttribute('href', open ? '#i-close' : '#i-menu');
+    }
+
     function switchTab(tabId) {
       activeTab = tabId;
       const tabs = ['dashboard', 'persona', 'knowledge', 'stickers', 'training'];
       tabs.forEach((t) => {
-        const view = document.getElementById(`view-${t}`);
-        if (view) view.classList.toggle('hidden', t !== tabId);
+        document.getElementById(`view-${t}`)?.classList.toggle('hidden', t !== tabId);
       });
 
       document.querySelectorAll('.nav-tab[data-tab]').forEach((btn) => {
         btn.classList.toggle('is-active', btn.dataset.tab === tabId);
       });
 
-      document.getElementById('mobile-nav-menu')?.classList.remove('is-open');
+      setMobileDrawer(false);
+      window.scrollTo({ top: 0, behavior: 'instant' });
 
       if (tabId === 'persona') loadPersonaData();
       if (tabId === 'knowledge') loadKnowledgeData();
@@ -765,35 +1093,33 @@
 
     async function fetchStatus(forceRefresh = false) {
       try {
-        const url = forceRefresh ? '/api/status?refresh=1' : '/api/status';
-        const res = await fetch(url);
+        const res = await fetch(forceRefresh ? '/api/status?refresh=1' : '/api/status');
         const data = await res.json();
         currentLLMConfig = data.llm || {};
 
-        // Master Service Switch
+        // Master Service Button
         const isSvcOn = data.settings?.serviceEnabled !== false;
         const svcBtn = document.getElementById('btn-toggle-service');
         const svcDot = document.getElementById('service-dot');
         const svcText = document.getElementById('service-text');
-        svcBtn.className = `btn btn-service-mobile ${isSvcOn ? 'btn-soft-emerald' : 'btn-soft-rose'}`;
-        svcDot.className = `dot ${isSvcOn ? 'dot-emerald' : 'dot-rose'}`;
+        svcBtn.className = `btn btn-topbar ${isSvcOn ? 'btn-soft-accent' : 'btn-soft-danger'}`;
+        svcDot.className = `dot ${isSvcOn ? 'dot-accent' : 'dot-danger'}`;
         svcText.textContent = isSvcOn ? 'Service: ON' : 'Service: OFF';
 
-        // Ask Queue Stale Alert Banner
+        // Ask Queue Stale Banner
         const staleCount = data.askQueue?.stalePendingCount || 0;
         const staleBanner = document.getElementById('ask-stale-banner');
         if (staleCount > 0) {
           staleBanner.classList.remove('hidden');
           document.getElementById('ask-stale-badge').textContent = `${staleCount} Tertahan`;
-          const summary = (data.askQueue.staleItems || [])
+          document.getElementById('ask-stale-text').textContent = (data.askQueue.staleItems || [])
             .map((it) => `${it.name} (${it.ageMinutes} mnt): "${it.question}"`)
-            .join(' | ');
-          document.getElementById('ask-stale-text').textContent = summary;
+            .join(' · ');
         } else {
           staleBanner.classList.add('hidden');
         }
 
-        // WhatsApp Status + Local QR SVG + Pairing Code
+        // WhatsApp Status + QR SVG + Pairing Code
         const waPill = document.getElementById('wa-pill');
         const waDesc = document.getElementById('wa-text-desc');
         const waReason = document.getElementById('wa-disconnect-reason');
@@ -803,14 +1129,14 @@
         const waStatus = data.whatsapp?.status;
 
         if (waStatus === 'connected') {
-          waPill.className = 'pill pill-emerald';
-          waPill.textContent = 'Terhubung';
-          waDesc.textContent = 'WhatsApp aktif dan siap melayani percakapan.';
+          waPill.className = 'pill pill-accent';
+          waPill.innerHTML = '<span class="dot dot-accent"></span>Terhubung';
+          waDesc.textContent = 'WhatsApp aktif dan siap melayani percakapan masuk.';
           waReason.classList.add('hidden');
           qrWrapper.classList.add('hidden');
           pairingSection.classList.add('hidden');
         } else if (waStatus === 'qr_ready') {
-          waPill.className = 'pill pill-amber';
+          waPill.className = 'pill pill-solid';
           waPill.textContent = 'Perlu Scan';
           waDesc.textContent = 'Pindai QR atau gunakan Kode Pairing 8 digit di bawah.';
           waReason.classList.add('hidden');
@@ -825,15 +1151,15 @@
             qrEl.replaceChildren(img);
           }
         } else if (waStatus === 'connecting') {
-          waPill.className = 'pill pill-amber';
-          waPill.textContent = 'Menghubungkan';
+          waPill.className = 'pill';
+          waPill.innerHTML = '<span class="dot dot-neutral dot-pulse"></span>Menghubungkan';
           waDesc.textContent = 'Sedang menginisialisasi koneksi ke server WhatsApp...';
           waReason.classList.add('hidden');
           qrWrapper.classList.add('hidden');
           pairingSection.classList.remove('hidden');
         } else {
-          waPill.className = 'pill pill-rose';
-          waPill.textContent = 'Terputus';
+          waPill.className = 'pill pill-danger';
+          waPill.innerHTML = '<span class="dot dot-danger"></span>Terputus';
           waDesc.textContent = 'Mencoba menghubungkan kembali secara bertahap...';
           qrWrapper.classList.add('hidden');
           pairingSection.classList.remove('hidden');
@@ -857,19 +1183,29 @@
         document.getElementById('llm-model-name').textContent = data.llm?.model || '-';
         document.getElementById('llm-base-url').textContent = data.llm?.baseUrl || '-';
         if (data.llm?.connected) {
-          llmPill.className = 'pill pill-emerald';
-          llmPill.textContent = 'Online';
+          llmPill.className = 'pill pill-accent';
+          llmPill.innerHTML = '<span class="dot dot-accent"></span>Online';
         } else {
-          llmPill.className = 'pill pill-rose';
-          llmPill.textContent = 'Offline';
+          llmPill.className = 'pill pill-danger';
+          llmPill.innerHTML = '<span class="dot dot-danger"></span>Offline';
         }
 
-        const toolsCount = (data.settings?.toolsAvailable || []).length;
-        document.getElementById('agent-tools-badge').textContent = `${toolsCount} Agent Tools Aktif`;
+        const totalTools = (data.settings?.toolsAvailable || []).length;
+        const totalContacts = data.settings?.totalContacts || 0;
+        const totalKnowledge = data.settings?.totalKnowledge || 0;
+        const totalStickers = data.settings?.totalStickers || 0;
+
+        document.getElementById('agent-tools-badge').textContent = `${totalTools} Agent Tools Aktif`;
+        document.getElementById('contact-count-text').textContent = `${totalContacts} Kontak`;
+        document.getElementById('summary-knowledge-pill').textContent = `${totalKnowledge} Dokumen`;
+        document.getElementById('summary-stickers-pill').textContent = `${totalStickers} Stiker`;
+        document.getElementById('nav-count-knowledge').textContent = String(totalKnowledge);
+        document.getElementById('mnav-count-knowledge').textContent = String(totalKnowledge);
+        document.getElementById('nav-count-stickers').textContent = String(totalStickers);
+        document.getElementById('mnav-count-stickers').textContent = String(totalStickers);
 
         setSwitchState('btn-toggle-whitelist', data.settings?.whitelistOnly);
         setSwitchState('btn-toggle-groups', data.settings?.replyGroups);
-        document.getElementById('contact-count-text').textContent = `${data.settings?.totalContacts || 0} Kontak`;
       } catch (err) {
         console.error('Error status:', err);
       }
@@ -881,7 +1217,7 @@
       const btn = document.getElementById('btn-request-pairing');
       const phone = input.value.trim();
       if (!phone) {
-        showToast('Masukkan nomor WhatsApp dengan kode negara (misal 62812...).', 'warn');
+        showToast('Masukkan nomor WhatsApp dengan kode negara (misal 62812...).', 'error');
         return;
       }
       btn.disabled = true;
@@ -905,8 +1241,129 @@
     }
 
     // ==========================================
-    // CONTACTS & CONVERSATIONS (XSS-SAFE)
+    // CONTACTS (FILTERED DESKTOP TABLE + COMPACT MOBILE CARDS)
     // ==========================================
+    function renderContactsFilterPills() {
+      const container = document.getElementById('contacts-filter-pills');
+      if (!container) return;
+      const usedCats = new Set(Object.values(currentContacts).map((c) => c.category || 'default'));
+      const keys = ['all', ...usedCats];
+      container.innerHTML = keys
+        .map((k) => {
+          const label = k === 'all' ? 'Semua' : formatCategoryName(k);
+          return `<button type="button" class="filter-chip ${contactCategoryFilter === k ? 'is-active' : ''}" data-contact-cat="${escapeHtml(k)}">${escapeHtml(label)}</button>`;
+        })
+        .join('');
+    }
+
+    function renderContactsViews() {
+      const tbody = document.getElementById('contacts-table-body');
+      const mobileList = document.getElementById('contacts-mobile-list');
+      const q = contactSearch.toLowerCase();
+
+      const entries = Object.entries(currentContacts).filter(([phone, c]) => {
+        const cat = c.category || 'default';
+        if (contactCategoryFilter !== 'all' && cat !== contactCategoryFilter) return false;
+        if (!q) return true;
+        return (
+          phone.includes(q) ||
+          String(c.name || '').toLowerCase().includes(q) ||
+          String(c.notes || '').toLowerCase().includes(q) ||
+          formatCategoryName(cat).toLowerCase().includes(q)
+        );
+      });
+
+      if (entries.length === 0) {
+        const msg = Object.keys(currentContacts).length === 0 ? 'Belum ada kontak terdaftar.' : 'Tidak ada kontak yang cocok dengan filter.';
+        tbody.innerHTML = `<tr><td colspan="6" class="empty-row">${escapeHtml(msg)}</td></tr>`;
+        mobileList.innerHTML = `<p class="empty-row" style="margin:0;">${escapeHtml(msg)}</p>`;
+        return;
+      }
+
+      tbody.innerHTML = entries
+        .map(([phone, c]) => {
+          const meta = currentContactMeta[phone] || {};
+          const isEnabled = c.enabled !== false;
+          const safePhone = escapeHtml(phone);
+          const safeName = escapeHtml(c.name || '-');
+          const safeCategory = escapeHtml(formatCategoryName(c.category));
+          const safeNotes = escapeHtml(c.notes || '-');
+          const formattedId = escapeHtml(formatContactIdentifier(phone, meta.jidType));
+
+          return `
+            <tr>
+              <td>
+                <div class="contact-cell">
+                  <span class="avatar avatar-sm">${escapeHtml(getInitials(c.name || phone))}</span>
+                  <strong style="color:var(--ink);">${safeName}</strong>
+                </div>
+              </td>
+              <td>
+                <div class="id-stack">
+                  <span class="mono">${formattedId}</span>
+                  ${renderJidBadge(meta)}
+                </div>
+              </td>
+              <td><span class="pill">${safeCategory}</span></td>
+              <td class="break-words" style="max-width:260px;color:var(--ink-muted);">${safeNotes}</td>
+              <td class="text-center">
+                <button type="button" data-action="toggle-contact" data-phone="${safePhone}" class="pill ${isEnabled ? 'pill-accent' : 'pill-outline'}" style="cursor:pointer;">
+                  <span class="dot ${isEnabled ? 'dot-accent' : 'dot-neutral'}"></span>${isEnabled ? 'Aktif' : 'Nonaktif'}
+                </button>
+              </td>
+              <td class="text-right">
+                <div class="actions-group">
+                  <button type="button" data-action="inspect-chat" data-phone="${safePhone}" class="btn btn-xs btn-secondary">Chat</button>
+                  <button type="button" data-action="edit-contact" data-phone="${safePhone}" class="btn btn-xs btn-secondary">Edit</button>
+                  <button type="button" data-action="delete-contact" data-phone="${safePhone}" class="btn btn-xs btn-danger-ghost">Hapus</button>
+                </div>
+              </td>
+            </tr>
+          `;
+        })
+        .join('');
+
+      // Compact 2-row Mobile Cards (hemat >50% tinggi guliran, tombol sentuh lega)
+      mobileList.innerHTML = entries
+        .map(([phone, c]) => {
+          const meta = currentContactMeta[phone] || {};
+          const isEnabled = c.enabled !== false;
+          const safePhone = escapeHtml(phone);
+          const safeName = escapeHtml(c.name || '-');
+          const safeCategory = escapeHtml(formatCategoryName(c.category));
+          const formattedId = escapeHtml(formatContactIdentifier(phone, meta.jidType));
+          const noteHtml = c.notes ? `<p class="m-card-note">${escapeHtml(c.notes)}</p>` : '';
+
+          return `
+            <div class="m-card">
+              <div class="m-card-top">
+                <div class="m-card-identity">
+                  <span class="avatar avatar-sm">${escapeHtml(getInitials(c.name || phone))}</span>
+                  <div style="min-width:0;">
+                    <span class="m-card-title truncate">${safeName}</span>
+                    <span class="m-card-sub mono truncate">${formattedId}</span>
+                  </div>
+                </div>
+                <button type="button" data-action="toggle-contact" data-phone="${safePhone}" class="pill ${isEnabled ? 'pill-accent' : 'pill-outline'}" style="cursor:pointer;">
+                  <span class="dot ${isEnabled ? 'dot-accent' : 'dot-neutral'}"></span>${isEnabled ? 'Aktif' : 'Nonaktif'}
+                </button>
+              </div>
+              <div class="m-card-meta">
+                <span class="pill">${safeCategory}</span>
+                ${renderJidBadge(meta)}
+              </div>
+              ${noteHtml}
+              <div class="m-card-actions">
+                <button type="button" data-action="inspect-chat" data-phone="${safePhone}" class="btn btn-sm btn-secondary">Lihat Chat</button>
+                <button type="button" data-action="edit-contact" data-phone="${safePhone}" class="btn btn-sm btn-secondary">Edit</button>
+                <button type="button" data-action="delete-contact" data-phone="${safePhone}" class="btn btn-sm btn-danger-ghost">Hapus</button>
+              </div>
+            </div>
+          `;
+        })
+        .join('');
+    }
+
     async function loadContacts() {
       try {
         const res = await fetch('/api/contacts');
@@ -929,88 +1386,74 @@
           if (prevVal && currentContacts[prevVal]) manualSelect.value = prevVal;
         }
 
-        const tbody = document.getElementById('contacts-table-body');
-        const phones = Object.keys(currentContacts);
-        if (phones.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="6" class="empty-cell">Belum ada kontak terdaftar.</td></tr>';
-          return;
-        }
-
-        tbody.innerHTML = phones
-          .map((phone) => {
-            const c = currentContacts[phone];
-            const meta = currentContactMeta[phone] || {};
-            const isEnabled = c.enabled !== false;
-            const safePhone = escapeHtml(phone);
-            const safeName = escapeHtml(c.name || '-');
-            const safeCategory = escapeHtml(formatCategoryName(c.category));
-            const safeNotes = escapeHtml(c.notes || '-');
-            const formattedId = escapeHtml(formatContactIdentifier(phone, meta.jidType));
-
-            return `
-              <tr>
-                <td data-label="Nama"><strong>${safeName}</strong></td>
-                <td data-label="Nomor / ID Kontak (LID)">
-                  <span class="font-mono" style="margin-right:6px;">${formattedId}</span>
-                  ${renderJidBadge(meta)}
-                </td>
-                <td data-label="Kategori"><span class="pill pill-slate">${safeCategory}</span></td>
-                <td data-label="Catatan Persona" class="break-words">${safeNotes}</td>
-                <td data-label="Status AI" class="text-center">
-                  <button type="button" data-action="toggle-contact" data-phone="${safePhone}" class="pill ${isEnabled ? 'pill-emerald' : 'pill-slate'}" style="cursor:pointer;">
-                    ${isEnabled ? 'Aktif' : 'Nonaktif'}
-                  </button>
-                </td>
-                <td class="text-right mobile-actions-row">
-                  <div class="actions-cell">
-                    <button type="button" data-action="inspect-chat" data-phone="${safePhone}" class="btn-link btn-link-emerald">Lihat Chat</button>
-                    <button type="button" data-action="edit-contact" data-phone="${safePhone}" class="btn-link btn-link-blue">Edit</button>
-                    <button type="button" data-action="delete-contact" data-phone="${safePhone}" class="btn-link btn-link-rose">Hapus</button>
-                  </div>
-                </td>
-              </tr>
-            `;
-          })
-          .join('');
+        renderContactsFilterPills();
+        renderContactsViews();
       } catch (err) {
         console.error('Error load contacts:', err);
       }
+    }
+
+    // ==========================================
+    // CONVERSATIONS & CHAT INSPECTOR
+    // ==========================================
+    function renderConversationsList() {
+      const activeConvs = currentConversations.filter((c) => c.messageCount > 0);
+      document.getElementById('active-chats-count').textContent = `${activeConvs.length} Obrolan`;
+      document.getElementById('wa-active-chats-pill').textContent = `${activeConvs.length} Percakapan`;
+
+      const box = document.getElementById('conversations-list');
+      const q = convSearch.toLowerCase();
+      const filtered = activeConvs.filter((c) => {
+        if (!q) return true;
+        return (
+          String(c.name || '').toLowerCase().includes(q) ||
+          String(c.phone || '').includes(q) ||
+          String(c.lastMessage?.content || '').toLowerCase().includes(q)
+        );
+      });
+
+      if (filtered.length === 0) {
+        box.innerHTML = `
+          <div class="empty-state">
+            <span class="empty-state-icon"><svg class="icon icon-lg"><use href="#i-chat"/></svg></span>
+            <p class="empty-state-title">${activeConvs.length === 0 ? 'Belum ada percakapan' : 'Tidak ditemukan'}</p>
+            <p class="empty-state-desc">${activeConvs.length === 0 ? 'Pesan masuk dan balasan AI akan muncul di sini.' : 'Coba kata kunci pencarian lain.'}</p>
+          </div>
+        `;
+        return;
+      }
+
+      box.innerHTML = filtered
+        .map((c) => {
+          const isSelected = selectedChatPhone === c.phone;
+          const prefix = c.lastMessage?.role === 'assistant' ? (c.lastMessage?.meta?.manualSend ? 'Manual: ' : 'Another Me: ') : '';
+          const lastText = c.lastMessage ? `${prefix}${c.lastMessage.content}` : 'Belum ada obrolan';
+          const time = c.lastMessage?.timestamp
+            ? new Date(c.lastMessage.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
+            : '';
+
+          return `
+            <button type="button" data-action="select-conv" data-phone="${escapeHtml(c.phone)}" data-name="${escapeHtml(c.name)}" data-category="${escapeHtml(c.category)}" class="conv-item ${isSelected ? 'is-selected' : ''}">
+              <span class="avatar avatar-sm">${escapeHtml(getInitials(c.name))}</span>
+              <div class="conv-body">
+                <div class="conv-top">
+                  <span class="conv-name truncate">${escapeHtml(c.name)}</span>
+                  <span class="conv-time mono">${escapeHtml(time)}</span>
+                </div>
+                <p class="conv-preview">${escapeHtml(lastText)}</p>
+              </div>
+            </button>
+          `;
+        })
+        .join('');
     }
 
     async function loadConversations() {
       try {
         const res = await fetch('/api/conversations');
         const data = await res.json();
-        const convList = data.conversations || [];
-        const activeConvs = convList.filter((c) => c.messageCount > 0);
-        document.getElementById('active-chats-count').textContent = `${activeConvs.length} Percakapan`;
-
-        const box = document.getElementById('conversations-list');
-        if (activeConvs.length === 0) {
-          box.innerHTML = '<p class="empty-cell">Belum ada percakapan masuk.</p>';
-          return;
-        }
-
-        box.innerHTML = activeConvs
-          .map((c) => {
-            const isSelected = selectedChatPhone === c.phone;
-            const prefix = c.lastMessage?.role === 'assistant' ? (c.lastMessage?.meta?.manualSend ? 'Manual: ' : 'Another Me: ') : '';
-            const lastText = c.lastMessage ? `${prefix}${c.lastMessage.content}` : 'Belum ada obrolan';
-            const time = c.lastMessage?.timestamp
-              ? new Date(c.lastMessage.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
-              : '';
-
-            return `
-              <button type="button" data-action="select-conv" data-phone="${escapeHtml(c.phone)}" data-name="${escapeHtml(c.name)}" data-category="${escapeHtml(c.category)}" class="conv-item ${isSelected ? 'is-selected' : ''}">
-                <div class="conv-item-top">
-                  <span class="conv-name truncate">${escapeHtml(c.name)}</span>
-                  <span class="conv-time">${escapeHtml(time)}</span>
-                </div>
-                <p class="conv-preview">${escapeHtml(lastText)}</p>
-              </button>
-            `;
-          })
-          .join('');
+        currentConversations = data.conversations || [];
+        renderConversationsList();
       } catch (err) {
         console.error('Error load conversations:', err);
       }
@@ -1022,15 +1465,16 @@
       const displayName = name || contact?.name || phone;
       const displayCategory = category || contact?.category || 'default';
 
-      document.getElementById('chat-header-name').textContent = `${displayName} (${phone})`;
-      document.getElementById('chat-header-meta').textContent = 'Riwayat percakapan (AI otomatis, kirim manual, dan perintah).';
+      document.getElementById('chat-header-avatar').textContent = getInitials(displayName);
+      document.getElementById('chat-header-name').textContent = displayName;
+      document.getElementById('chat-header-meta').textContent = `ID: ${phone}`;
 
       const badge = document.getElementById('chat-header-badge');
       badge.textContent = formatCategoryName(displayCategory);
-      badge.className = 'pill pill-slate';
+      badge.className = 'pill';
 
       document.getElementById('btn-clear-chat').classList.remove('hidden');
-      loadConversations();
+      renderConversationsList();
 
       try {
         const res = await fetch(`/api/history/${encodeURIComponent(phone)}`);
@@ -1039,7 +1483,13 @@
         const box = document.getElementById('chat-messages-container');
 
         if (history.length === 0) {
-          box.innerHTML = '<div class="empty-cell">Belum ada pertukaran pesan dengan kontak ini.</div>';
+          box.innerHTML = `
+            <div class="empty-state">
+              <span class="empty-state-icon"><svg class="icon icon-lg"><use href="#i-chat"/></svg></span>
+              <p class="empty-state-title">Riwayat kosong</p>
+              <p class="empty-state-desc">Belum ada pertukaran pesan dengan kontak ini.</p>
+            </div>
+          `;
           return;
         }
 
@@ -1051,11 +1501,7 @@
               : '';
 
             if (meta.systemNote) {
-              return `
-                <div class="chat-row is-center">
-                  <span class="system-note-pill">${escapeHtml(msg.content)} ${time ? `• ${escapeHtml(time)}` : ''}</span>
-                </div>
-              `;
+              return `<div class="chat-row is-center"><span class="system-note-pill">${escapeHtml(msg.content)}${time ? ` · ${escapeHtml(time)}` : ''}</span></div>`;
             }
 
             const isOutgoing = msg.role === 'assistant';
@@ -1076,14 +1522,12 @@
                 label = 'Another Me (AI)';
               }
             } else {
-              if (meta.pushName && meta.pushName !== label) {
-                label += ` (~${meta.pushName})`;
-              }
+              if (meta.pushName && meta.pushName !== label) label += ` (~${meta.pushName})`;
               if (meta.skippedWhileAiOff) {
                 bubbleClass = 'bubble-skipped';
-                extraBadge = '<span class="pill pill-amber">Dilewati saat AI OFF</span>';
+                extraBadge = '<span class="pill pill-outline">Dilewati saat AI OFF</span>';
               } else if (meta.command) {
-                extraBadge = `<span class="pill pill-slate">${escapeHtml(meta.command)}</span>`;
+                extraBadge = `<span class="pill mono">${escapeHtml(meta.command)}</span>`;
               }
             }
 
@@ -1091,7 +1535,7 @@
               <div class="chat-row ${rowClass}">
                 <div class="chat-bubble-wrap">
                   <div class="chat-meta">
-                    <span>${escapeHtml(label)}${time ? ` • ${escapeHtml(time)}` : ''}</span>
+                    <span>${escapeHtml(label)}${time ? ` · ${escapeHtml(time)}` : ''}</span>
                     ${extraBadge}
                   </div>
                   <div class="chat-bubble ${bubbleClass}">
@@ -1110,15 +1554,15 @@
     }
 
     // ==========================================
-    // MANUAL SEND (SMART LID ROUTING)
+    // MANUAL SEND (HUMAN-FRIENDLY COPY + SMART LID ROUTING)
     // ==========================================
     function updateManualRouteHint() {
       const phone = document.getElementById('input-manual-phone').value.trim();
       const hint = document.getElementById('manual-route-hint');
       if (selectedManualContact && phone === selectedManualContact) {
-        hint.textContent = 'Jalur kirim: /api/send-to-contact (menggunakan JID @lid tersimpan milik kontak terdaftar)';
+        hint.textContent = 'Mengirim lewat identitas tersimpan (@lid) milik kontak terdaftar.';
       } else {
-        hint.textContent = 'Jalur kirim: /api/send-message (nomor tujuan langsung)';
+        hint.textContent = 'Mengirim ke nomor tujuan secara langsung.';
       }
     }
 
@@ -1138,7 +1582,7 @@
       const bodyPayload = useSendToContact ? { nameOrPhone: phone, message } : { phone, message };
 
       btn.disabled = true;
-      statusEl.textContent = 'Mengirim...';
+      statusEl.textContent = 'Mengirim pesan...';
       try {
         const res = await fetch(endpoint, {
           method: 'POST',
@@ -1148,7 +1592,7 @@
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'Gagal mengirim pesan');
         const targetLabel = data.contactName || data.phone;
-        statusEl.textContent = `Terkirim ke ${targetLabel} (${data.bubbles} balon) via ${data.jid}.`;
+        statusEl.textContent = `Terkirim ke ${targetLabel} (${data.bubbles} balon).`;
         showToast(`Pesan terkirim ke ${targetLabel}`, 'success');
         document.getElementById('input-manual-message').value = '';
         loadLogs();
@@ -1158,6 +1602,61 @@
         showToast(err.message, 'error');
       } finally {
         btn.disabled = false;
+      }
+    }
+
+    // ==========================================
+    // LOGS WITH FILTER CHIPS
+    // ==========================================
+    function summarizeLog(log) {
+      const text = String(log.text || '');
+      if (text.includes('Tool Call')) {
+        const match = text.match(/Tool Call \[([^\]]+)\]/);
+        return `Agent menggunakan tool: ${match ? match[1] : 'Tool'}`;
+      }
+      if (text.startsWith('Balasan AI') || text.startsWith('Pesan Masuk')) return text;
+      if (text.includes('Stiker') && text.includes('terkirim')) {
+        const match = text.match(/Stiker \[([^\]]+)\] terkirim ke (.+)/);
+        return match ? `Stiker "${match[1]}" terkirim ke ${match[2]}` : 'Stiker terkirim';
+      }
+      return text.length > 200 ? `${text.slice(0, 197)}...` : text;
+    }
+
+    function renderLogs() {
+      const box = document.getElementById('logs-container');
+      const filtered = currentLogs.filter((log) => {
+        const text = String(log.text || '');
+        if (logFilter === 'chat') return log.type === 'incoming' || log.type === 'reply' || log.type === 'manual-send';
+        if (logFilter === 'tool') return text.includes('Tool Call');
+        if (logFilter === 'error') return log.type === 'error' || log.type === 'warn';
+        return true;
+      });
+
+      if (filtered.length === 0) {
+        box.innerHTML = '<p class="field-hint" style="margin:0;">Belum ada aktivitas pada filter ini.</p>';
+        return;
+      }
+
+      box.innerHTML = filtered
+        .map((log) => {
+          let cls = 'log-msg-muted';
+          if (log.type === 'reply') cls = 'log-msg-reply';
+          else if (log.type === 'incoming' || log.type === 'manual-send') cls = 'log-msg-incoming';
+          else if (log.type === 'error') cls = 'log-msg-error';
+
+          return `<div class="log-entry"><span class="log-time mono">${escapeHtml(log.time)}</span><span class="log-msg ${cls}">${escapeHtml(summarizeLog(log))}</span></div>`;
+        })
+        .join('');
+    }
+
+    async function loadLogs() {
+      try {
+        const res = await fetch('/api/logs');
+        const data = await res.json();
+        currentLogs = data.logs || [];
+        renderLogs();
+      } catch (err) {
+        console.error('Error logs:', err);
       }
     }
 
@@ -1209,7 +1708,7 @@
 
       const delBtn = document.createElement('button');
       delBtn.type = 'button';
-      delBtn.className = 'btn btn-sm btn-soft-rose';
+      delBtn.className = 'btn btn-xs btn-danger-ghost';
       delBtn.textContent = 'Hapus';
       delBtn.addEventListener('click', () => row.remove());
 
@@ -1230,34 +1729,37 @@
         const catKeys = Object.keys(categories);
 
         if (catKeys.length === 0) {
-          grid.innerHTML = '<p class="empty-cell">Belum ada kategori persona.</p>';
+          grid.innerHTML = '<p class="empty-row">Belum ada kategori persona.</p>';
         } else {
           grid.innerHTML = catKeys
             .map((key) => {
               const item = categories[key];
-              const vocab = (item.vocabulary || []).join(', ');
+              const vocabArr = Array.isArray(item.vocabulary) ? item.vocabulary : [];
+              const vocabHtml = vocabArr.length > 0
+                ? `<div class="vocab-chips">${vocabArr.slice(0, 6).map((v) => `<span class="vocab-chip">${escapeHtml(v)}</span>`).join('')}${vocabArr.length > 6 ? `<span class="vocab-chip">+${vocabArr.length - 6}</span>` : ''}</div>`
+                : '';
               const fewShotsCount = (item.few_shots || []).length;
               const safeKey = escapeHtml(key);
 
               return `
-                <div class="persona-card">
-                  <div>
-                    <div class="card-header" style="margin-bottom:6px;">
-                      <strong style="color:var(--text);">${escapeHtml(formatCategoryName(key))}</strong>
-                      <span class="pill pill-slate font-mono">${safeKey}</span>
+                <article class="persona-card">
+                  <div class="persona-card-body">
+                    <div class="card-head" style="align-items:center;">
+                      <h3 class="card-title">${escapeHtml(formatCategoryName(key))}</h3>
+                      <span class="pill pill-outline mono">${safeKey}</span>
                     </div>
-                    <p style="margin:0 0 4px;font-weight:600;color:var(--text-body);">${escapeHtml(item.tone || '-')}</p>
-                    <p class="field-hint truncate" style="margin:0 0 8px;">Panggilan: ${escapeHtml(vocab || '-')}</p>
+                    <p class="persona-tone">${escapeHtml(item.tone || '-')}</p>
+                    ${vocabHtml}
                     <div class="persona-guidelines">${escapeHtml(item.guidelines || '-')}</div>
                   </div>
-                  <div class="card-footer-line" style="margin-top:0;">
+                  <div class="card-foot">
                     <span>${fewShotsCount} Contoh Obrolan</span>
-                    <div class="actions-cell">
-                      <button type="button" data-action="edit-category" data-key="${safeKey}" class="btn-link btn-link-blue">Edit</button>
-                      <button type="button" data-action="delete-category" data-key="${safeKey}" class="btn-link btn-link-rose">Hapus</button>
+                    <div class="actions-group">
+                      <button type="button" data-action="edit-category" data-key="${safeKey}" class="btn btn-xs btn-secondary">Edit</button>
+                      <button type="button" data-action="delete-category" data-key="${safeKey}" class="btn btn-xs btn-danger-ghost">Hapus</button>
                     </div>
                   </div>
-                </div>
+                </article>
               `;
             })
             .join('');
@@ -1301,46 +1803,111 @@
     }
 
     // ==========================================
-    // KNOWLEDGE BASE (WITH VIEW/EDIT MODAL)
+    // KNOWLEDGE BASE (SEARCH + FILTER + COMPACT MOBILE CARDS)
     // ==========================================
+    function renderKnowledgeFilterPills() {
+      const container = document.getElementById('knowledge-filter-pills');
+      if (!container) return;
+      const cats = new Set(currentKnowledge.map((d) => d.category || 'all'));
+      const keys = ['__all__', ...cats];
+      container.innerHTML = keys
+        .map((k) => {
+          const label = k === '__all__' ? 'Semua' : k === 'all' ? 'Universal' : formatCategoryName(k);
+          return `<button type="button" class="filter-chip ${knowledgeCategoryFilter === k ? 'is-active' : ''}" data-kb-cat="${escapeHtml(k)}">${escapeHtml(label)}</button>`;
+        })
+        .join('');
+    }
+
+    function renderKnowledgeViews() {
+      const tbody = document.getElementById('knowledge-table-body');
+      const mobileList = document.getElementById('knowledge-mobile-list');
+      const q = knowledgeSearch.toLowerCase();
+
+      const docs = currentKnowledge.filter((doc) => {
+        const cat = doc.category || 'all';
+        if (knowledgeCategoryFilter !== '__all__' && knowledgeCategoryFilter !== 'all_filter' && cat !== knowledgeCategoryFilter) return false;
+        if (!q) return true;
+        return (
+          String(doc.title || '').toLowerCase().includes(q) ||
+          String(doc.fileType || '').toLowerCase().includes(q) ||
+          formatCategoryName(cat).toLowerCase().includes(q)
+        );
+      });
+
+      document.getElementById('knowledge-count-badge').textContent = `${docs.length} / ${currentKnowledge.length} Dokumen`;
+
+      if (docs.length === 0) {
+        const msg = currentKnowledge.length === 0 ? 'Belum ada dokumen atau catatan pengetahuan.' : 'Tidak ada dokumen yang cocok dengan pencarian.';
+        tbody.innerHTML = `<tr><td colspan="6" class="empty-row">${escapeHtml(msg)}</td></tr>`;
+        mobileList.innerHTML = `<p class="empty-row" style="margin:0;">${escapeHtml(msg)}</p>`;
+        return;
+      }
+
+      tbody.innerHTML = docs
+        .map((doc) => {
+          const isEnabled = doc.enabled !== false;
+          const safeId = escapeHtml(doc.id);
+          const catLabel = doc.category === 'all' ? 'Universal' : formatCategoryName(doc.category);
+          return `
+            <tr>
+              <td><strong style="color:var(--ink);">${escapeHtml(doc.title)}</strong></td>
+              <td class="mono" style="color:var(--ink-muted);">${escapeHtml(doc.fileType)}</td>
+              <td><span class="pill">${escapeHtml(catLabel)}</span></td>
+              <td style="color:var(--ink-muted);">${Number(doc.charCount || 0).toLocaleString('id-ID')} karakter</td>
+              <td class="text-center">
+                <button type="button" data-action="toggle-knowledge" data-id="${safeId}" class="pill ${isEnabled ? 'pill-accent' : 'pill-outline'}" style="cursor:pointer;">
+                  <span class="dot ${isEnabled ? 'dot-accent' : 'dot-neutral'}"></span>${isEnabled ? 'Aktif' : 'Nonaktif'}
+                </button>
+              </td>
+              <td class="text-right">
+                <div class="actions-group">
+                  <button type="button" data-action="edit-knowledge" data-id="${safeId}" class="btn btn-xs btn-secondary">Lihat / Edit</button>
+                  <button type="button" data-action="delete-knowledge" data-id="${safeId}" class="btn btn-xs btn-danger-ghost">Hapus</button>
+                </div>
+              </td>
+            </tr>
+          `;
+        })
+        .join('');
+
+      // Compact 2-row Mobile Cards (cuts 14-item scroll height by >60%)
+      mobileList.innerHTML = docs
+        .map((doc) => {
+          const isEnabled = doc.enabled !== false;
+          const safeId = escapeHtml(doc.id);
+          const catLabel = doc.category === 'all' ? 'Universal' : formatCategoryName(doc.category);
+          return `
+            <div class="m-card">
+              <div class="m-card-top">
+                <div style="min-width:0;">
+                  <span class="m-card-title truncate">${escapeHtml(doc.title)}</span>
+                  <span class="m-card-sub">${Number(doc.charCount || 0).toLocaleString('id-ID')} karakter · <span class="mono">${escapeHtml(doc.fileType)}</span></span>
+                </div>
+                <button type="button" data-action="toggle-knowledge" data-id="${safeId}" class="pill ${isEnabled ? 'pill-accent' : 'pill-outline'}" style="cursor:pointer;">
+                  <span class="dot ${isEnabled ? 'dot-accent' : 'dot-neutral'}"></span>${isEnabled ? 'Aktif' : 'Nonaktif'}
+                </button>
+              </div>
+              <div class="m-card-meta">
+                <span class="pill">${escapeHtml(catLabel)}</span>
+              </div>
+              <div class="m-card-actions">
+                <button type="button" data-action="edit-knowledge" data-id="${safeId}" class="btn btn-sm btn-secondary">Lihat / Edit</button>
+                <button type="button" data-action="delete-knowledge" data-id="${safeId}" class="btn btn-sm btn-danger-ghost">Hapus</button>
+              </div>
+            </div>
+          `;
+        })
+        .join('');
+    }
+
     async function loadKnowledgeData() {
       try {
         const res = await fetch('/api/knowledge');
         const data = await res.json();
         currentKnowledge = data.documents || [];
-
-        const tbody = document.getElementById('knowledge-table-body');
-        if (currentKnowledge.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="6" class="empty-cell">Belum ada dokumen atau catatan pengetahuan.</td></tr>';
-          return;
-        }
-
-        tbody.innerHTML = currentKnowledge
-          .map((doc) => {
-            const isEnabled = doc.enabled !== false;
-            const safeId = escapeHtml(doc.id);
-            const catLabel = doc.category === 'all' ? 'Universal' : formatCategoryName(doc.category);
-            return `
-              <tr>
-                <td data-label="Judul Dokumen"><strong>${escapeHtml(doc.title)}</strong></td>
-                <td data-label="Tipe" class="font-mono">${escapeHtml(doc.fileType)}</td>
-                <td data-label="Target Kategori"><span class="pill pill-slate">${escapeHtml(catLabel)}</span></td>
-                <td data-label="Panjang Karakter">${Number(doc.charCount || 0).toLocaleString('id-ID')} karakter</td>
-                <td data-label="Status Injeksi" class="text-center">
-                  <button type="button" data-action="toggle-knowledge" data-id="${safeId}" class="pill ${isEnabled ? 'pill-emerald' : 'pill-slate'}" style="cursor:pointer;">
-                    ${isEnabled ? 'Aktif' : 'Nonaktif'}
-                  </button>
-                </td>
-                <td class="text-right mobile-actions-row">
-                  <div class="actions-cell">
-                    <button type="button" data-action="edit-knowledge" data-id="${safeId}" class="btn-link btn-link-blue">Lihat / Edit</button>
-                    <button type="button" data-action="delete-knowledge" data-id="${safeId}" class="btn-link btn-link-rose">Hapus</button>
-                  </div>
-                </td>
-              </tr>
-            `;
-          })
-          .join('');
+        knowledgeCategoryFilter = '__all__';
+        renderKnowledgeFilterPills();
+        renderKnowledgeViews();
       } catch (err) {
         console.error('Error load knowledge:', err);
       }
@@ -1364,39 +1931,51 @@
     }
 
     // ==========================================
-    // STICKERS MANAGEMENT
+    // STICKERS (SEARCH + LIVE UPLOAD PREVIEW)
     // ==========================================
+    function renderStickersGallery() {
+      const q = stickerSearch.toLowerCase();
+      const filtered = currentStickers.filter((s) => !q || String(s.tag || '').toLowerCase().includes(q));
+      document.getElementById('sticker-total-badge').textContent = `${currentStickers.length} Stiker`;
+
+      const gallery = document.getElementById('stickers-gallery');
+      if (filtered.length === 0) {
+        gallery.innerHTML = `
+          <div class="empty-state" style="grid-column:1/-1;">
+            <span class="empty-state-icon"><svg class="icon icon-lg"><use href="#i-smile"/></svg></span>
+            <p class="empty-state-title">${currentStickers.length === 0 ? 'Belum ada stiker' : 'Tag tidak ditemukan'}</p>
+            <p class="empty-state-desc">${currentStickers.length === 0 ? 'Unggah berkas .webp di panel unggah untuk memulai.' : 'Coba kata kunci lain.'}</p>
+          </div>
+        `;
+        return;
+      }
+
+      gallery.innerHTML = filtered
+        .map((s) => `
+          <div class="sticker-card">
+            <div class="sticker-thumb">
+              <img src="/stickers/${encodeURIComponent(s.fileName)}" alt="${escapeHtml(s.tag)}" loading="lazy">
+            </div>
+            <strong class="truncate" style="width:100%;font-size:12px;color:var(--ink);">${escapeHtml(s.tag)}</strong>
+            <button type="button" data-action="delete-sticker" data-file="${escapeHtml(s.fileName)}" class="btn btn-xs btn-danger-ghost btn-full">Hapus</button>
+          </div>
+        `)
+        .join('');
+    }
+
     async function loadStickersData() {
       try {
         const res = await fetch('/api/stickers');
         const data = await res.json();
-        const stickers = data.stickers || [];
-        document.getElementById('sticker-total-badge').textContent = `${stickers.length} Stiker`;
-
-        const gallery = document.getElementById('stickers-gallery');
-        if (stickers.length === 0) {
-          gallery.innerHTML = '<p class="empty-cell" style="grid-column:1/-1;">Belum ada stiker di koleksi. Unggah file .webp di sebelah kiri.</p>';
-          return;
-        }
-
-        gallery.innerHTML = stickers
-          .map((s) => `
-            <div class="sticker-card">
-              <div class="sticker-thumb">
-                <img src="/stickers/${encodeURIComponent(s.fileName)}" alt="${escapeHtml(s.tag)}" loading="lazy">
-              </div>
-              <strong class="truncate" style="width:100%;font-size:12px;">${escapeHtml(s.tag)}</strong>
-              <button type="button" data-action="delete-sticker" data-file="${escapeHtml(s.fileName)}" class="btn-link btn-link-rose">Hapus</button>
-            </div>
-          `)
-          .join('');
+        currentStickers = data.stickers || [];
+        renderStickersGallery();
       } catch (err) {
         console.error('Error load stickers:', err);
       }
     }
 
     // ==========================================
-    // TRAINING ROOM & SIMULATION (FIXED simHistory)
+    // TRAINING ROOM & SIMULATION
     // ==========================================
     function updateSimCategoryBadge() {
       const sel = document.getElementById('sim-select-category');
@@ -1408,13 +1987,18 @@
       simHistory = [];
       lastSimUserMessage = '';
       lastSimAIMessage = '';
-      document.getElementById('sim-messages-container').innerHTML =
-        '<div class="empty-cell">Sesi baru dimulai. Ketik pesan di bawah untuk menguji respons persona AI.</div>';
+      document.getElementById('sim-messages-container').innerHTML = `
+        <div class="empty-state">
+          <span class="empty-state-icon"><svg class="icon icon-xl"><use href="#i-flask"/></svg></span>
+          <p class="empty-state-title">Sesi baru siap diuji</p>
+          <p class="empty-state-desc">Ketik pesan di bawah untuk menguji respons persona AI.</p>
+        </div>
+      `;
       document.getElementById('sim-review-corrected').value = '';
       document.getElementById('sim-review-knowledge').value = '';
       document.getElementById('sim-analysis-banner').classList.add('hidden');
       const statusBadge = document.getElementById('sim-interpret-status');
-      statusBadge.className = 'pill';
+      statusBadge.className = 'pill pill-outline';
       statusBadge.textContent = 'Menunggu Sesi';
     }
 
@@ -1442,7 +2026,7 @@
         `
         <div class="chat-row is-left">
           <div class="chat-bubble-wrap">
-            <div class="chat-meta">Kamu (Sebagai Lawan Bicara) • ${escapeHtml(now)}</div>
+            <div class="chat-meta">Kamu (Lawan Bicara) · ${escapeHtml(now)}</div>
             <div class="chat-bubble bubble-user">
               <p class="whitespace-pre-wrap break-words">${escapeHtml(msg)}</p>
             </div>
@@ -1456,17 +2040,11 @@
         const res = await fetch('/api/simulation/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            message: msg,
-            category,
-            customContext,
-            history: simHistory
-          })
+          body: JSON.stringify({ message: msg, category, customContext, history: simHistory })
         });
         const data = await res.json();
         if (!res.ok || !data.success) throw new Error(data.error || 'Simulasi gagal');
 
-        // BUG-03 FIX: simpan giliran 'user' ke simHistory sebelum 'assistant'
         simHistory.push({ role: 'user', content: msg });
 
         lastSimAIMessage = data.replyText;
@@ -1478,14 +2056,14 @@
         let toolNote = '';
         if (data.toolCallsLog && data.toolCallsLog.length > 0) {
           const names = data.toolCallsLog.map((t) => t.name).join(', ');
-          toolNote = `<div style="margin-bottom:4px;"><span class="pill pill-purple font-mono">🔧 ${escapeHtml(names)}</span></div>`;
+          toolNote = `<div style="margin-bottom:5px;"><span class="pill pill-solid mono">Tool: ${escapeHtml(names)}</span></div>`;
         }
 
         let stickerNote = '';
         if (data.actions && data.actions.length > 0) {
           data.actions.forEach((act) => {
             if (act.type === 'send_sticker') {
-              stickerNote += `<div style="margin-top:4px;font-size:11px;opacity:0.95;">🖼️ Stiker: ${escapeHtml(act.tag)}</div>`;
+              stickerNote += `<div style="margin-top:5px;font-size:11px;opacity:0.9;">Stiker dikirim: ${escapeHtml(act.tag)}</div>`;
             }
           });
         }
@@ -1493,7 +2071,7 @@
         const bubblesHtml = bubbles
           .map(
             (bText, idx) => `
-            <div class="chat-bubble bubble-sim">
+            <div class="chat-bubble bubble-ai">
               ${idx === 0 ? toolNote : ''}
               <p class="whitespace-pre-wrap break-words">${escapeHtml(bText || '(hanya stiker)')}</p>
               ${idx === bubbles.length - 1 ? stickerNote : ''}
@@ -1507,7 +2085,7 @@
           `
           <div class="chat-row is-right">
             <div class="chat-bubble-wrap">
-              <div class="chat-meta">Another Me (AI) • ${escapeHtml(now)}${bubbles.length > 1 ? ` (${bubbles.length} pesan)` : ''}</div>
+              <div class="chat-meta">Another Me (Sandbox) · ${escapeHtml(now)}${bubbles.length > 1 ? ` (${bubbles.length} balon)` : ''}</div>
               ${bubblesHtml}
             </div>
           </div>
@@ -1517,13 +2095,13 @@
 
         document.getElementById('sim-review-corrected').value = bubbles.filter(Boolean).join('\n---\n');
         const statusBadge = document.getElementById('sim-interpret-status');
-        statusBadge.className = 'pill pill-amber';
-        statusBadge.textContent = 'Edit balasan lalu klik "Interpretasi"';
+        statusBadge.className = 'pill';
+        statusBadge.textContent = 'Siap Diinterpretasi';
       } catch (err) {
         showToast(`Error simulasi: ${err.message}`, 'error');
       } finally {
         btn.disabled = false;
-        btn.textContent = 'Uji AI';
+        btn.innerHTML = '<svg class="icon icon-sm"><use href="#i-send"/></svg> Uji AI';
       }
     }
 
@@ -1535,17 +2113,17 @@
       const statusBadge = document.getElementById('sim-interpret-status');
 
       if (!lastSimUserMessage && simHistory.length === 0) {
-        showToast('Belum ada pesan simulasi. Kirim pesan uji di atas terlebih dahulu.', 'warn');
+        showToast('Kirim pesan simulasi terlebih dahulu.', 'error');
         return;
       }
       if (!perfectReply) {
-        showToast('Tuliskan balasan sempurna versi kamu terlebih dahulu.', 'warn');
+        showToast('Tuliskan balasan sempurna versi kamu terlebih dahulu.', 'error');
         return;
       }
 
       btn.disabled = true;
-      btn.textContent = '⏳ AI sedang mempelajari jawabanmu...';
-      statusBadge.className = 'pill pill-purple';
+      btn.textContent = 'Menganalisis jawaban...';
+      statusBadge.className = 'pill pill-solid';
       statusBadge.textContent = 'Menganalisis...';
 
       try {
@@ -1570,71 +2148,27 @@
           document.getElementById('sim-analysis-text').textContent = interp.analysis;
           document.getElementById('sim-analysis-banner').classList.remove('hidden');
         }
-        statusBadge.className = 'pill pill-emerald';
-        statusBadge.textContent = '✓ Pelajaran Dipahami AI';
+        statusBadge.className = 'pill pill-accent';
+        statusBadge.textContent = 'Pelajaran Siap Disimpan';
         showToast('Interpretasi selesai! Silakan tinjau dan simpan.', 'success');
       } catch (err) {
-        statusBadge.className = 'pill pill-rose';
+        statusBadge.className = 'pill pill-danger';
         statusBadge.textContent = 'Interpretasi Gagal';
         showToast(err.message, 'error');
       } finally {
         btn.disabled = false;
-        btn.textContent = '💡 Interpretasi (Minta AI Pahami Jawaban Ini)';
+        btn.innerHTML = '<svg class="icon icon-sm"><use href="#i-spark"/></svg> Interpretasi Jawaban Ini';
       }
     }
 
     // ==========================================
-    // LOGS (XSS-SAFE)
-    // ==========================================
-    function summarizeLog(log) {
-      const text = String(log.text || '');
-      if (text.includes('Tool Call')) {
-        const match = text.match(/Tool Call \[([^\]]+)\]/);
-        return `AI menggunakan tool: ${match ? match[1] : 'Agent Tool'}`;
-      }
-      if (text.startsWith('Balasan AI') || text.startsWith('Pesan Masuk')) {
-        return text;
-      }
-      if (text.includes('Stiker') && text.includes('terkirim')) {
-        const match = text.match(/Stiker \[([^\]]+)\] terkirim ke (.+)/);
-        return match ? `Stiker "${match[1]}" terkirim ke ${match[2]}` : 'Stiker terkirim';
-      }
-      return text.length > 200 ? `${text.slice(0, 197)}...` : text;
-    }
-
-    async function loadLogs() {
-      try {
-        const res = await fetch('/api/logs');
-        const data = await res.json();
-        const box = document.getElementById('logs-container');
-        if (!data.logs || data.logs.length === 0) {
-          box.innerHTML = '<p class="empty-cell" style="padding:8px !important;">Belum ada aktivitas baru.</p>';
-          return;
-        }
-
-        box.innerHTML = data.logs
-          .map((log) => {
-            let cls = 'log-default';
-            if (log.type === 'incoming') cls = 'log-incoming';
-            else if (log.type === 'reply') cls = 'log-reply';
-            else if (log.type === 'error') cls = 'log-error';
-            else if (log.type === 'warn') cls = 'log-warn';
-            if (String(log.text || '').includes('Tool Call')) cls = 'log-tool';
-
-            return `<div class="log-line"><span class="log-time font-mono">${escapeHtml(log.time)}</span><span class="${cls}">${escapeHtml(summarizeLog(log))}</span></div>`;
-          })
-          .join('');
-      } catch (err) {
-        console.error('Error logs:', err);
-      }
-    }
-
-    // ==========================================
-    // EVENT BINDINGS & DELEGATION (NO INLINE ONCLICK)
+    // EVENT BINDINGS & DELEGATION (ZERO INLINE ONCLICK)
     // ==========================================
     document.getElementById('mobile-nav-toggle').addEventListener('click', () => {
-      document.getElementById('mobile-nav-menu').classList.toggle('is-open');
+      const isOpen = document.getElementById('mobile-nav-menu').classList.contains('is-open');
+      setMobileDrawer(!isOpen);
     });
+    document.getElementById('mobile-nav-backdrop').addEventListener('click', () => setMobileDrawer(false));
 
     document.querySelectorAll('.nav-tab[data-tab]').forEach((btn) => {
       btn.addEventListener('click', () => switchTab(btn.dataset.tab));
@@ -1642,6 +2176,19 @@
 
     document.querySelectorAll('[data-close-modal]').forEach((btn) => {
       btn.addEventListener('click', () => closeModal(btn.dataset.closeModal));
+    });
+
+    document.querySelectorAll('.modal-backdrop').forEach((backdrop) => {
+      backdrop.addEventListener('click', (e) => {
+        if (e.target === backdrop) backdrop.classList.add('hidden');
+      });
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        document.querySelectorAll('.modal-backdrop:not(.hidden)').forEach((m) => m.classList.add('hidden'));
+        setMobileDrawer(false);
+      }
     });
 
     document.getElementById('btn-toggle-service').addEventListener('click', async () => {
@@ -1659,7 +2206,11 @@
       document.getElementById('input-llm-baseurl').value = currentLLMConfig.baseUrl || '';
       document.getElementById('input-llm-model').value = currentLLMConfig.model || '';
       document.getElementById('input-llm-vision-model').value = currentLLMConfig.visionModel || '';
-      document.getElementById('input-llm-apikey').value = '';
+      const keyInput = document.getElementById('input-llm-apikey');
+      keyInput.value = '';
+      keyInput.type = 'password';
+      document.querySelector('#apikey-eye-icon use')?.setAttribute('href', '#i-eye');
+      document.getElementById('llm-test-result').classList.add('hidden');
       const locked = Boolean(currentLLMConfig.locked);
       document.getElementById('llm-locked-notice').classList.toggle('hidden', !locked);
       document.getElementById('btn-save-llm').disabled = locked;
@@ -1671,6 +2222,28 @@
     document.getElementById('btn-refresh-llm').addEventListener('click', () => {
       fetchStatus(true);
       showToast('Memeriksa ulang kesehatan LLM...', 'info');
+    });
+
+    document.getElementById('btn-toggle-apikey-vis').addEventListener('click', () => {
+      const input = document.getElementById('input-llm-apikey');
+      const show = input.type === 'password';
+      input.type = show ? 'text' : 'password';
+      document.querySelector('#apikey-eye-icon use')?.setAttribute('href', show ? '#i-eye-off' : '#i-eye');
+    });
+
+    document.getElementById('btn-test-llm-conn').addEventListener('click', async () => {
+      const resultEl = document.getElementById('llm-test-result');
+      resultEl.classList.remove('hidden');
+      resultEl.textContent = 'Menguji koneksi LLM aktif...';
+      try {
+        const res = await fetch('/api/status?refresh=1');
+        const data = await res.json();
+        resultEl.textContent = data.llm?.connected
+          ? `Terhubung ke ${data.llm.model} (${data.llm.baseUrl}).`
+          : `Gagal terhubung: ${data.llm?.message || 'Endpoint tidak merespons'}.`;
+      } catch (err) {
+        resultEl.textContent = `Gagal memeriksa koneksi: ${err.message}`;
+      }
     });
 
     document.getElementById('form-llm').addEventListener('submit', async (e) => {
@@ -1714,15 +2287,92 @@
       await fetch('/api/settings/toggle-whitelist', { method: 'POST' });
       fetchStatus();
     });
-
     document.getElementById('btn-toggle-groups').addEventListener('click', async () => {
       await fetch('/api/settings/toggle-groups', { method: 'POST' });
       fetchStatus();
     });
 
+    // Search & Filter Listeners
+    document.getElementById('input-search-conv').addEventListener('input', (e) => {
+      convSearch = e.target.value.trim();
+      renderConversationsList();
+    });
+    document.getElementById('input-search-contacts').addEventListener('input', (e) => {
+      contactSearch = e.target.value.trim();
+      renderContactsViews();
+    });
+    document.getElementById('contacts-filter-pills').addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-contact-cat]');
+      if (!btn) return;
+      contactCategoryFilter = btn.dataset.contactCat;
+      renderContactsFilterPills();
+      renderContactsViews();
+    });
+
+    document.getElementById('input-search-knowledge').addEventListener('input', (e) => {
+      knowledgeSearch = e.target.value.trim();
+      renderKnowledgeViews();
+    });
+    document.getElementById('knowledge-filter-pills').addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-kb-cat]');
+      if (!btn) return;
+      knowledgeCategoryFilter = btn.dataset.kbCat;
+      renderKnowledgeFilterPills();
+      renderKnowledgeViews();
+    });
+
+    document.getElementById('input-search-stickers').addEventListener('input', (e) => {
+      stickerSearch = e.target.value.trim();
+      renderStickersGallery();
+    });
+
+    document.getElementById('logs-filter-pills').addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-log-filter]');
+      if (!btn) return;
+      logFilter = btn.dataset.logFilter;
+      document.querySelectorAll('#logs-filter-pills .filter-chip').forEach((b) => {
+        b.classList.toggle('is-active', b === btn);
+      });
+      renderLogs();
+    });
     document.getElementById('btn-refresh-logs').addEventListener('click', loadLogs);
 
-    // Manual Send Smart Binding
+    // Dropzone Visual Feedback (Knowledge & Sticker Preview)
+    document.getElementById('input-doc-file').addEventListener('change', (e) => {
+      const file = e.target.files?.[0];
+      const badge = document.getElementById('doc-dropzone-file');
+      if (file) {
+        badge.textContent = `${file.name} (${Math.max(1, Math.round(file.size / 1024))} KB)`;
+        badge.classList.remove('hidden');
+      } else {
+        badge.classList.add('hidden');
+      }
+    });
+
+    document.getElementById('input-sticker-file').addEventListener('change', (e) => {
+      const file = e.target.files?.[0];
+      const badge = document.getElementById('sticker-dropzone-file');
+      const img = document.getElementById('sticker-upload-preview');
+      const icon = document.getElementById('sticker-dropzone-icon');
+      if (stickerPreviewObjectUrl) {
+        URL.revokeObjectURL(stickerPreviewObjectUrl);
+        stickerPreviewObjectUrl = null;
+      }
+      if (file) {
+        badge.textContent = file.name;
+        badge.classList.remove('hidden');
+        stickerPreviewObjectUrl = URL.createObjectURL(file);
+        img.src = stickerPreviewObjectUrl;
+        img.classList.remove('hidden');
+        icon.classList.add('hidden');
+      } else {
+        badge.classList.add('hidden');
+        img.classList.add('hidden');
+        icon.classList.remove('hidden');
+      }
+    });
+
+    // Manual Send
     document.getElementById('select-manual-contact').addEventListener('change', (e) => {
       selectedManualContact = e.target.value;
       document.getElementById('input-manual-phone').value = e.target.value;
@@ -1731,7 +2381,7 @@
     document.getElementById('input-manual-phone').addEventListener('input', updateManualRouteHint);
     document.getElementById('form-manual-send').addEventListener('submit', handleSendManual);
 
-    // Contacts Modal & Delegation
+    // Contacts CRUD Delegation (both desktop table & mobile cards)
     document.getElementById('btn-add-contact').addEventListener('click', () => {
       document.getElementById('modal-title').textContent = 'Tambah Kontak Baru';
       document.getElementById('input-old-phone').value = '';
@@ -1770,7 +2420,7 @@
       }
     });
 
-    document.getElementById('contacts-table-body').addEventListener('click', async (e) => {
+    async function handleContactActionClick(e) {
       const btn = e.target.closest('button[data-action]');
       if (!btn) return;
       const { action, phone } = btn.dataset;
@@ -1780,6 +2430,7 @@
       } else if (action === 'inspect-chat') {
         const c = currentContacts[phone] || {};
         inspectChat(phone, c.name || phone, c.category || 'default');
+        document.getElementById('chat-header-name')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       } else if (action === 'edit-contact') {
         const c = currentContacts[phone];
         if (!c) return;
@@ -1800,7 +2451,10 @@
         fetchStatus();
         showToast('Kontak dihapus.', 'info');
       }
-    });
+    }
+
+    document.getElementById('contacts-table-body').addEventListener('click', handleContactActionClick);
+    document.getElementById('contacts-mobile-list').addEventListener('click', handleContactActionClick);
 
     document.getElementById('conversations-list').addEventListener('click', (e) => {
       const item = e.target.closest('button[data-action="select-conv"]');
@@ -1815,7 +2469,13 @@
         const res = await fetch(`/api/history/${encodeURIComponent(selectedChatPhone)}`, { method: 'DELETE' });
         const data = await res.json();
         if (data.success) {
-          document.getElementById('chat-messages-container').innerHTML = '<div class="empty-cell">Riwayat obrolan telah dibersihkan.</div>';
+          document.getElementById('chat-messages-container').innerHTML = `
+            <div class="empty-state">
+              <span class="empty-state-icon"><svg class="icon icon-lg"><use href="#i-chat"/></svg></span>
+              <p class="empty-state-title">Riwayat dibersihkan</p>
+              <p class="empty-state-desc">Percakapan sebelumnya telah dihapus dari memori.</p>
+            </div>
+          `;
           loadConversations();
           showToast('Riwayat percakapan dihapus.', 'success');
         }
@@ -1834,7 +2494,7 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ identity, core_typing_rules })
         });
-        showToast('Aturan gaya pengetikan umum berhasil disimpan.', 'success');
+        showToast('Aturan gaya pengetikan umum disimpan.', 'success');
         loadPersonaData();
       } catch {
         showToast('Gagal menyimpan persona umum.', 'error');
@@ -1848,9 +2508,8 @@
       const btn = e.target.closest('button[data-action]');
       if (!btn) return;
       const { action, key } = btn.dataset;
-      if (action === 'edit-category') {
-        openCategoryModal(key);
-      } else if (action === 'delete-category') {
+      if (action === 'edit-category') openCategoryModal(key);
+      else if (action === 'delete-category') {
         if (!confirm(`Hapus kategori persona '${key}'?`)) return;
         await fetch(`/api/persona/category/${encodeURIComponent(key)}`, { method: 'DELETE' });
         loadPersonaData();
@@ -1888,7 +2547,7 @@
       }
     });
 
-    // Knowledge Handlers
+    // Knowledge Handlers (both desktop table & mobile cards)
     document.getElementById('form-upload-doc').addEventListener('submit', async (e) => {
       e.preventDefault();
       const fileInput = document.getElementById('input-doc-file');
@@ -1910,6 +2569,7 @@
         if (!res.ok || !data.success) throw new Error(data.error || 'Gagal mengunggah dokumen');
         fileInput.value = '';
         document.getElementById('input-doc-title').value = '';
+        document.getElementById('doc-dropzone-file').classList.add('hidden');
         loadKnowledgeData();
         fetchStatus();
         showToast('Dokumen berhasil diekstrak dan disimpan.', 'success');
@@ -1944,7 +2604,7 @@
       }
     });
 
-    document.getElementById('knowledge-table-body').addEventListener('click', async (e) => {
+    async function handleKnowledgeActionClick(e) {
       const btn = e.target.closest('button[data-action]');
       if (!btn) return;
       const { action, id } = btn.dataset;
@@ -1960,7 +2620,10 @@
         fetchStatus();
         showToast('Dokumen pengetahuan dihapus.', 'info');
       }
-    });
+    }
+
+    document.getElementById('knowledge-table-body').addEventListener('click', handleKnowledgeActionClick);
+    document.getElementById('knowledge-mobile-list').addEventListener('click', handleKnowledgeActionClick);
 
     document.getElementById('form-knowledge-edit').addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -1968,7 +2631,6 @@
       const title = document.getElementById('input-edit-doc-title').value.trim();
       const category = document.getElementById('input-edit-doc-category').value;
       const content = document.getElementById('input-edit-doc-content').value.trim();
-
       try {
         const res = await fetch(`/api/knowledge/${encodeURIComponent(id)}`, {
           method: 'PUT',
@@ -2005,6 +2667,9 @@
         if (!res.ok || !data.success) throw new Error(data.error || 'Gagal unggah stiker');
         fileInput.value = '';
         document.getElementById('input-sticker-tag').value = '';
+        document.getElementById('sticker-dropzone-file').classList.add('hidden');
+        document.getElementById('sticker-upload-preview').classList.add('hidden');
+        document.getElementById('sticker-dropzone-icon').classList.remove('hidden');
         loadStickersData();
         fetchStatus();
         showToast(`Stiker "${data.tag}" ditambahkan.`, 'success');
@@ -2055,7 +2720,7 @@
       const category = document.getElementById('sim-select-category').value;
       const corrected = document.getElementById('sim-review-corrected').value.trim();
       if (!lastSimUserMessage || !corrected) {
-        showToast('Pastikan sudah ada pesan latihan dan koreksi balasan.', 'warn');
+        showToast('Pastikan sudah ada pesan latihan dan koreksi balasan.', 'error');
         return;
       }
       try {
@@ -2077,7 +2742,7 @@
       const category = document.getElementById('sim-select-category').value;
       const lesson = document.getElementById('sim-review-knowledge').value.trim();
       if (!lesson) {
-        showToast('Tuliskan pelajaran baru di kolom Knowledge Base terlebih dahulu.', 'warn');
+        showToast('Tuliskan pelajaran baru di kolom Knowledge Base terlebih dahulu.', 'error');
         return;
       }
       try {
@@ -2106,7 +2771,7 @@
       const corrected = document.getElementById('sim-review-corrected').value.trim();
       const lesson = document.getElementById('sim-review-knowledge').value.trim();
       if (!corrected && !lesson) {
-        showToast('Isi koreksi balasan atau catatan fakta terlebih dahulu.', 'warn');
+        showToast('Isi koreksi balasan atau catatan fakta terlebih dahulu.', 'error');
         return;
       }
       let savedCount = 0;
@@ -2141,7 +2806,7 @@
     });
 
     // ==========================================
-    // VISIBILITY-AWARE POLLING (HEMAT RESOURCE)
+    // VISIBILITY-AWARE POLLING
     // ==========================================
     function runBackgroundPoll() {
       if (document.hidden) return;
@@ -2156,7 +2821,7 @@
       if (!document.hidden) runBackgroundPoll();
     });
 
-    // Inisialisasi awal
+    // Inisialisasi Awal
     fetchStatus();
     loadContacts();
     loadConversations();

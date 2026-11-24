@@ -20,8 +20,15 @@ Bot ini membalas pesan WhatsApp sesuai gaya ketik pemilik berdasarkan kategori r
   - **Maksimal 2 Balon & Huruf Kapital Awal**: Balasan bot dibatasi maksimal 2 balon (kelebihan digabung ke balon kedua tanpa membuang isi) dan setiap balon diawali huruf kapital. Pengiriman manual pemilik lewat dasbor tidak dibatasi 2 balon.
   - **Centang Biru Cerdas**: Pesan ditandai terbaca (*read receipt*) hanya ketika balasan siap dikirim agar pesan gagal tidak tampak diabaikan.
 - **Perintah Instan WhatsApp (Khusus Kontak Terdaftar)**:
-  - `!acep` / `!acep on` / `!acep off` / `!acep status`: Menyalakan atau mematikan AI khusus kontak pengirim (tidak mengubah sakelar layanan global).
+  - `!acep` / `!acep on` / `!acep off` / `!acep status`: Menyalakan atau mematikan Artificial Intelligence (AI) khusus kontak pengirim (tidak mengubah sakelar layanan global).
   - `!ask <pertanyaan>` (alias `!tanya`): Menuliskan pertanyaan ke antrean berkas `data/ask-queue/<id>.json` untuk ditangani hook asisten eksternal, disertai pemantau antrean tertahan di dasbor.
+- **Perintah Utilitas & Meme WhatsApp (Pemilik & Lawan Chat Pribadi / Grup)**:
+  - Dapat dipakai oleh pemilik sendiri (`fromMe: true`, di chat pribadi, chat ke diri sendiri, maupun grup) serta lawan bicara di chat pribadi maupun grup dengan pelindung anti-spam WhatsApp berlapis (*jitter* alami, *cooldown* per pengirim & per grup, kuota jendela geser, *silent drop*, penalti *flood* 30 menit, dan *circuit breaker* global).
+  - Seluruh perintah utilitas mendukung **dua awalan (`!` dan `.`)** beserta alias cadangan (misal `!sticker`, `!stiker`, `!s`, `.sticker`, `.stiker`, `.s`).
+  - Bantuan & sistem: `!menu` (`help`, `bantuan`, `cmd`, `list`), `!ping` (`cek`, `status`, `uptime`).
+  - Media & stiker berbasis Sharp & FFmpeg (batas 5 Megabyte, tolak berkas tidak didukung): `!sticker` (`stiker`, `s`, `stk` — mendukung foto, GIF, dan video pendek menjadi stiker bergerak, opsi `crop`), `!toimg` (`toimage`, `togif`, `img`, `gambar`, `foto` — stiker diam jadi gambar, stiker bergerak jadi GIF), `!wm <paket> | <pembuat>` (`steal`, `watermark`, `take`).
+  - Meme kustom: `!text <teks>` (`teks`, `txt` — latar putih polos, teks hitam sans-serif tebal rata kiri blur tipis), `!stext <teks>` (`steks`, `stxt`, `brat`, `sbrat`, `st` — langsung stiker), dan `!cap <atas> | <bawah>` (`caption`, `burem`, `blurcap` — font Impact kapital isi putih outline hitam tebal, 1 teks otomatis di bawah, lalu seluruh gambar akhir di-blur Gaussian ringan 2–4 piksel).
+  - Utilitas harian gratis: `!cuaca [kota]` (`weather`, `suhu`), `!jam [zona]` (`waktu`, `time`, `tanggal`, `tgl`), `!cari <kata kunci>` (`wiki`, `search`, `info`), `!pilih <opsi1 | opsi2 | ...>` (`pick`, `choose`, `acak`, `random`).
 - **Dukungan Linked Identity (`@lid`)**: Merekam Jabber Identifier (JID) asli pengirim di `data/contact_jids.json` (termasuk pemetaan alias Baileys v7) dan mendukung pengiriman aman lewat `/api/send-to-contact`.
 - **Knowledge Base Multi-Format**: Ekstraksi `.pdf`, `.docx`, `.md`, `.txt`, `.json`, `.csv`, catatan langsung (*snippet*), *cache* memori selektif hemat token, serta fitur lihat & edit isi dokumen dari dasbor.
 - **Training Room (Sandbox & Evaluasi Reflektif)**: Menggunakan perakit prompt yang identik dengan WhatsApp sungguhan, tanpa pernah mengirim pesan ke WhatsApp, dilengkapi interpretasi koreksi otomatis dan simpan 1 klik ke *Few-Shot* atau *Knowledge Base*.
@@ -47,11 +54,18 @@ another-me/
 │   ├── knowledgeManager.js          # Ekstraksi dokumen, cache memori, & pencarian relevansi
 │   ├── settingsStore.js             # Persistensi atomik data/settings.json
 │   ├── ollamaClient.js              # Klien Ollama legacy (tidak dipakai jalur utama)
+│   ├── media/
+│   │   └── imageProcessor.js        # Olah gambar Sharp (!sticker, !toimg, !wm, !text, !stext, !cap)
 │   ├── utils/
-│   │   └── atomicFile.js            # Penulisan JSON atomik, validasi WebP, & render QR SVG lokal
+│   │   ├── atomicFile.js            # Penulisan JSON atomik, validasi WebP, & render QR SVG lokal
+│   │   └── webpExif.js              # Penyisip metadata EXIF stiker WhatsApp murni JavaScript
 │   ├── whatsapp/
-│   │   ├── baileysService.js        # Siklus hidup Baileys, backoff reconnect, & antrean burst
-│   │   └── commandRouter.js         # Parser !acep, !ask, serta pemantau/pembersih ask-queue
+│   │   ├── baileysService.js        # Siklus hidup Baileys, backoff reconnect, burst, & loop guard
+│   │   ├── commandAntiSpam.js       # Pelindung anti-spam berlapis & pembatas konkurensi media
+│   │   ├── commandRouter.js         # Parser !acep, !ask, serta pemantau/pembersih ask-queue
+│   │   └── utilityCommands.js       # Router perintah utilitas & meme WhatsApp
+├── assets/
+│   └── fonts/                       # Font cadangan Anton (OFL 1.1) & fonts.conf khusus Linux
 │   ├── routes/
 │   │   └── apiRoutes.js             # Seluruh endpoint HTTP /api/*
 │   └── tools/

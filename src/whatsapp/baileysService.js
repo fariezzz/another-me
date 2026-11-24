@@ -24,6 +24,13 @@ function buildProxyAgent() {
 
 const { renderQrToSvg } = require('../utils/atomicFile');
 const { handleInstantCommands } = require('./commandRouter');
+const { CommandAntiSpamGuard } = require('./commandAntiSpam');
+const {
+  unwrapWhatsAppMessage,
+  cleanCommandText,
+  parseUtilityCommand,
+  handleUtilityCommands
+} = require('./utilityCommands');
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -31,11 +38,133 @@ function getRandomDelay(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
+function getMessageTimestampSeconds(msg) {
+  const raw = msg?.messageTimestamp;
+  if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
+  if (typeof raw === 'bigint') return Number(raw);
+  if (raw && typeof raw.toNumber === 'function') return raw.toNumber();
+  if (raw && typeof raw === 'object' && typeof raw.low === 'number') {
+    return (raw.high || 0) * 0x100000000 + (raw.low >>> 0);
+  }
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/**
+ * Menyaring noise internal Baileys v7 yang tidak berbahaya (dekripsi Sender Key grup/status,
+ * rollback transaksi internal auth-utils, dan stream error 515 pasca-pairing) agar terminal
+ * dan bot.log tetap bersih. Pesan fromMe milik pemilik tidak pernah disaring bila gagal dekripsi.
+ */
+function shouldSuppressBaileysLog(entry) {
+  if (!entry || typeof entry !== 'object') return false;
+  const msg = String(entry.msg || '');
+  const errMsg = String(entry.err?.message || entry.error?.message || '');
+  const remoteJid = String(entry.key?.remoteJid || entry.sender || '');
+  const isFromMe = Boolean(entry.key?.fromMe);
+  const isGroupOrBroadcast =
+    remoteJid === 'status@broadcast' ||
+    remoteJid.endsWith('@broadcast') ||
+    remoteJid.endsWith('@g.us');
+
+  if (msg === 'transaction failed, rolling back') {
+    return true;
+  }
+
+  if (msg === 'failed to decrypt message' && !isFromMe) {
+    if (
+      isGroupOrBroadcast ||
+      entry.messageType === 'skmsg' ||
+      /no session found to decrypt message/i.test(errMsg)
+    ) {
+      return true;
+    }
+  }
+
+  if (msg === 'stream errored out' && String(entry.fullErrorNode?.attrs?.code || '') === '515') {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Memformat log galat Baileys yang benar-benar penting menjadi 1 baris ringkas yang mudah dibaca,
+ * menggantikan dump JSON mentah Pino yang panjang.
+ */
+function formatCleanBaileysLog(entry) {
+  const levelNum = Number(entry.level || 50);
+  const levelTag =
+    levelNum >= 60 ? 'FATAL' : levelNum >= 50 ? 'ERROR' : levelNum >= 40 ? 'WARN' : 'INFO';
+  const msg = String(entry.msg || 'Baileys event').trim();
+  const errMsg = String(entry.err?.message || entry.error?.message || '').trim();
+  const remoteJid = String(entry.key?.remoteJid || entry.sender || '').trim();
+  const code = entry.fullErrorNode?.attrs?.code ? ` [kode ${entry.fullErrorNode.attrs.code}]` : '';
+  const details = [];
+  if (errMsg && errMsg !== msg) details.push(errMsg);
+  if (remoteJid) details.push(`dari ${remoteJid}`);
+  const suffix = details.length > 0 ? ` - ${details.join(' | ')}` : '';
+  return `[Baileys ${levelTag}] ${msg}${code}${suffix}`;
+}
+
+/**
+ * Membuat logger Pino kompatibel Baileys (mendukung .child) yang menyaring noise
+ * dan merapikan format log menjadi satu baris bersih dengan deduplikasi 60 detik.
+ */
+function createFilteredBaileysLogger({
+  level = process.env.BAILEYS_LOG_LEVEL || 'error',
+  rawMode = process.env.BAILEYS_RAW_LOGS === 'true',
+  writeLine = (line) => console.error(line),
+  dedupWindowMs = 60 * 1000
+} = {}) {
+  if (rawMode) {
+    return pino({ level });
+  }
+
+  const recentLines = new Map();
+
+  const destination = {
+    write(chunk) {
+      const text = String(chunk || '').trim();
+      if (!text) return;
+
+      let entry;
+      try {
+        entry = JSON.parse(text);
+      } catch {
+        writeLine(`[Baileys] ${text}`);
+        return;
+      }
+
+      if (shouldSuppressBaileysLog(entry)) {
+        return;
+      }
+
+      const formatted = formatCleanBaileysLog(entry);
+      const now = Date.now();
+      const lastSeen = recentLines.get(formatted) || 0;
+      if (now - lastSeen < dedupWindowMs) {
+        return;
+      }
+      recentLines.set(formatted, now);
+      if (recentLines.size > 100) {
+        for (const [k, ts] of recentLines.entries()) {
+          if (now - ts >= dedupWindowMs) recentLines.delete(k);
+        }
+      }
+
+      writeLine(formatted);
+    }
+  };
+
+  return pino({ level }, destination);
+}
+
 class BaileysService {
-  constructor({ llm, contextManager, knowledgeManager, settingsStore, addLog, options = {} }) {
+  constructor({ llm, contextManager, knowledgeManager, toolRegistry = null, settingsStore, addLog, options = {} }) {
     this.llm = llm;
     this.contextManager = contextManager;
     this.knowledgeManager = knowledgeManager;
+    this.toolRegistry = toolRegistry;
     this.settingsStore = settingsStore;
     this.addLog = addLog || (() => {});
 
@@ -46,8 +175,8 @@ class BaileysService {
     this.burstWindowMs = parseInt(process.env.BURST_WINDOW_MS, 10) || 4000;
     this.burstProcessTimeoutMs = options.burstProcessTimeoutMs ?? 90000;
 
-    // Level 'error' (bukan 'silent') agar galat kritis Signal/Baileys tetap tercatat di stderr/log
-    this.logger = pino({ level: process.env.BAILEYS_LOG_LEVEL || 'error' });
+    // Logger Pino tersaring: buang noise grup/status/rollback dan format sisa galat jadi 1 baris rapi
+    this.logger = options.logger || createFilteredBaileysLogger();
 
     this.waSocket = null;
     this.connectionStatus = 'connecting';
@@ -63,6 +192,46 @@ class BaileysService {
 
     // Antrean burst berada di level instans layanan agar konsisten lintas reconnect
     this.pendingBursts = new Map();
+
+    // Pengaman anti-loop untuk pesan keluar bot sendiri (penting saat fromMe: true diproses)
+    this.sentMessageIds = new Set();
+
+    // Pelindung anti-spam berlapis untuk perintah utilitas WhatsApp
+    this.commandAntiSpam =
+      options.commandAntiSpam ||
+      new CommandAntiSpamGuard({
+        addLog: this.addLog
+      });
+  }
+
+  rememberSentMessageId(msgId) {
+    if (!msgId) return;
+    this.sentMessageIds.add(msgId);
+    if (this.sentMessageIds.size > 500) {
+      const oldest = this.sentMessageIds.values().next().value;
+      if (oldest !== undefined) this.sentMessageIds.delete(oldest);
+    }
+  }
+
+  async sendTrackedMessage(remoteJid, content, options = {}) {
+    const sent = await this.waSocket.sendMessage(remoteJid, content, options);
+    this.rememberSentMessageId(sent?.key?.id);
+    return sent;
+  }
+
+  /**
+   * Mengunduh media WhatsApp dengan memakai ulang fungsi downloadMediaMessage bawaan Baileys.
+   */
+  async downloadMediaBuffer(targetMsg) {
+    return await downloadMediaMessage(
+      targetMsg,
+      'buffer',
+      {},
+      {
+        logger: this.logger,
+        reuploadRequest: this.waSocket?.updateMediaMessage
+      }
+    );
   }
 
   getStatus() {
@@ -78,6 +247,20 @@ class BaileysService {
 
   isConnected() {
     return Boolean(this.waSocket && this.connectionStatus === 'connected');
+  }
+
+  /**
+   * Memeriksa apakah suatu JID (nomor telepon @s.whatsapp.net maupun @lid) adalah milik akun bot sendiri.
+   * Dibutuhkan pada grup WhatsApp Baileys v7 yang memakai addressingMode 'lid',
+   * di mana msg.key.fromMe kadang bernilai false meskipun participantAlt cocok dengan user.id kita.
+   */
+  isOwnUserJid(jid) {
+    if (!jid || !this.waSocket?.user) return false;
+    const targetUser = String(jid).split('@')[0].split(':')[0];
+    if (!targetUser) return false;
+    const myIdUser = String(this.waSocket.user.id || '').split('@')[0].split(':')[0];
+    const myLidUser = String(this.waSocket.user.lid || '').split('@')[0].split(':')[0];
+    return Boolean((myIdUser && targetUser === myIdUser) || (myLidUser && targetUser === myLidUser));
   }
 
   /**
@@ -268,7 +451,7 @@ class BaileysService {
     const sentIds = [];
     for (let i = 0; i < bubbles.length; i++) {
       if (i > 0) await sleep(getRandomDelay(1500, 2800));
-      const sent = await this.waSocket.sendMessage(targetJid, { text: bubbles[i] });
+      const sent = await this.sendTrackedMessage(targetJid, { text: bubbles[i] });
       if (sent?.key?.id) sentIds.push(sent.key.id);
       this.contextManager.addMessage(phone, 'assistant', bubbles[i], { manualSend: true });
     }
@@ -418,7 +601,7 @@ class BaileysService {
 
         await this.waSocket.sendPresenceUpdate('paused', remoteJid);
         const sendOptions = i === 0 ? { quoted: msg } : {};
-        await this.waSocket.sendMessage(remoteJid, { text: bubbleText }, sendOptions);
+        await this.sendTrackedMessage(remoteJid, { text: bubbleText }, sendOptions);
 
         this.contextManager.addMessage(senderPhone, 'assistant', bubbleText);
 
@@ -436,7 +619,7 @@ class BaileysService {
         if (act.type === 'send_sticker' && act.filePath) {
           try {
             const stickerBuffer = fs.readFileSync(act.filePath);
-            await this.waSocket.sendMessage(remoteJid, { sticker: stickerBuffer });
+            await this.sendTrackedMessage(remoteJid, { sticker: stickerBuffer });
             this.addLog('reply', `Stiker [${act.tag}] terkirim ke ${profile.name}`);
             this.contextManager.addMessage(senderPhone, 'assistant', `[Mengirim Stiker: ${act.tag}]`, { systemNote: true });
           } catch (stkErr) {
@@ -451,51 +634,182 @@ class BaileysService {
     try {
       const settings = this.settingsStore.getAll();
       if (!settings.serviceEnabled) return;
-      if (m.type !== 'notify') return;
+      const isNotify = m.type === 'notify';
+      const isAppend = m.type === 'append';
+      if (!isNotify && !isAppend) return;
+
+      const nowSeconds = Math.floor(Date.now() / 1000);
 
       for (const msg of m.messages) {
         if (!msg.key) continue;
-        if (msg.key.fromMe) continue;
+
+        // 1. Abaikan pesan yang baru saja dikirim bot ini sendiri agar tidak terjadi infinite loop
+        if (msg.key.id && this.sentMessageIds.has(msg.key.id)) continue;
 
         const remoteJid = msg.key.remoteJid;
         if (!remoteJid) continue;
         if (remoteJid === 'status@broadcast' || remoteJid.includes('@broadcast')) continue;
 
+        // Untuk event 'append' (sinkronisasi perangkat/offline), hanya terima pesan baru (< 60 detik)
+        // dan khusus untuk perintah '!' agar riwayat chat lama tidak pernah diproses ulang.
+        if (isAppend) {
+          const msgTs = getMessageTimestampSeconds(msg);
+          if (!msgTs || Math.abs(nowSeconds - msgTs) > 60) continue;
+        }
+
         const isGroup = remoteJid.endsWith('@g.us');
-        if (isGroup && !settings.replyGroups) continue;
+        const isFromMe =
+          Boolean(msg.key.fromMe) ||
+          (isGroup &&
+            (this.isOwnUserJid(msg.key.participant) || this.isOwnUserJid(msg.key.participantAlt)));
+        const normalizedMessage = unwrapWhatsAppMessage(msg.message);
+
+        const isSticker = Boolean(normalizedMessage?.stickerMessage);
+        let messageText =
+          normalizedMessage?.conversation ||
+          normalizedMessage?.extendedTextMessage?.text ||
+          normalizedMessage?.imageMessage?.caption ||
+          normalizedMessage?.videoMessage?.caption ||
+          normalizedMessage?.documentMessage?.caption ||
+          '';
+        const cleanedText = cleanCommandText(messageText);
+
+        // 2. Jalur khusus pemilik (fromMe: true atau participant cocok dengan akun bot di grup LID):
+        //    Boleh menjalankan perintah utilitas (awalan ! maupun .) di chat pribadi, chat ke diri sendiri, maupun grup,
+        //    tetapi TIDAK PERNAH masuk ke !acep, !ask, atau balasan otomatis Artificial Intelligence.
+        const isRecognizedUtilityCmd = Boolean(parseUtilityCommand(cleanedText));
+
+        if (isFromMe) {
+          if (msg.messageStubType && !cleanedText) {
+            const stubInfo = Array.isArray(msg.messageStubParameters)
+              ? msg.messageStubParameters.join(', ')
+              : '';
+            const warnText = `[Command] Pesan pemilik (fromMe) di ${remoteJid} belum terbaca/gagal dekripsi (stub ${msg.messageStubType}${stubInfo ? `: ${stubInfo}` : ''}).`;
+            console.warn(warnText);
+            this.addLog('warn', warnText);
+            continue;
+          }
+
+          if (isRecognizedUtilityCmd) {
+            await handleUtilityCommands({
+              waSocket: this.waSocket,
+              sendTrackedMessage: (jid, content, opts) => this.sendTrackedMessage(jid, content, opts),
+              downloadMediaBuffer: (target) => this.downloadMediaBuffer(target),
+              remoteJid,
+              senderKey: 'owner',
+              fromMe: true,
+              isGroup,
+              profile: { isKnown: true, name: 'Pemilik' },
+              messageText: cleanedText,
+              msg,
+              normalizedMessage,
+              toolRegistry: this.toolRegistry,
+              llm: this.llm,
+              antiSpamGuard: this.commandAntiSpam,
+              addLog: this.addLog
+            });
+          }
+          continue;
+        }
+
+        // 3. Jalur perintah utilitas di GRUP untuk anggota lain (tetap mematikan AI auto-reply grup
+        //    jika settings.replyGroups == false, dan dilindungi anti-spam per-grup + per-pengirim).
+        if (isGroup) {
+          const allowGroupCommands = process.env.ALLOW_GROUP_COMMANDS !== 'false';
+          if (allowGroupCommands && isRecognizedUtilityCmd) {
+            const groupSenderJid = msg.key.participant || remoteJid;
+            const groupSenderAlt = msg.key.participantAlt || '';
+            const groupSenderProfile = this.contextManager.getContactProfile(
+              groupSenderJid,
+              msg.pushName || '',
+              groupSenderAlt
+            );
+            const groupSenderKey =
+              groupSenderProfile.phone || groupSenderJid || remoteJid;
+
+            const handledGroupUtility = await handleUtilityCommands({
+              waSocket: this.waSocket,
+              sendTrackedMessage: (jid, content, opts) => this.sendTrackedMessage(jid, content, opts),
+              downloadMediaBuffer: (target) => this.downloadMediaBuffer(target),
+              remoteJid,
+              senderKey: groupSenderKey,
+              fromMe: false,
+              isGroup: true,
+              profile: groupSenderProfile,
+              messageText: cleanedText,
+              msg,
+              normalizedMessage,
+              toolRegistry: this.toolRegistry,
+              llm: this.llm,
+              antiSpamGuard: this.commandAntiSpam,
+              addLog: this.addLog
+            });
+            if (handledGroupUtility) continue;
+          }
+
+          // Balasan otomatis AI dan !acep/!ask tetap menghormati pengaturan replyGroups
+          if (!settings.replyGroups) continue;
+        }
+
+        if (!isSticker && (!cleanedText || cleanedText.length === 0)) continue;
+
+        // Event 'append' lawan bicara hanya boleh memicu perintah (! / .), bukan balasan AI biasa
+        if (isAppend && !cleanedText.startsWith('!') && !isRecognizedUtilityCmd) continue;
 
         const altJid = msg.key.remoteJidAlt || msg.key.senderPn || '';
-        const isSticker = Boolean(msg.message?.stickerMessage);
-        let messageText =
-          msg.message?.conversation ||
-          msg.message?.extendedTextMessage?.text ||
-          msg.message?.imageMessage?.caption ||
-          msg.message?.videoMessage?.caption ||
-          '';
-
-        if (!isSticker && (!messageText || messageText.trim().length === 0)) continue;
-
         const senderPushName = msg.pushName || '';
-        this.contextManager.recordContactJid(remoteJid, altJid);
-        const profile = this.contextManager.getContactProfile(remoteJid, senderPushName, altJid);
+        if (!isGroup) {
+          this.contextManager.recordContactJid(remoteJid, altJid);
+        }
+        const profile = this.contextManager.getContactProfile(
+          isGroup ? msg.key.participant || remoteJid : remoteJid,
+          senderPushName,
+          isGroup ? msg.key.participantAlt || '' : altJid
+        );
         const senderPhone = profile.phone;
 
-        // Evaluasi perintah instan (!ask dan !acep) SEBELUM gate whitelist dan SEBELUM vision stiker
-        if (messageText && messageText.trim().length > 0) {
+        // 3a. Evaluasi perintah instan bawaan (!ask dan !acep) SEBELUM gate whitelist & vision stiker
+        if (cleanedText.length > 0) {
           const handled = await handleInstantCommands({
             waSocket: this.waSocket,
             remoteJid,
             senderPhone,
             senderPushName,
             profile,
-            messageText,
+            messageText: cleanedText,
             msg,
             contextManager: this.contextManager,
             queueDir: this.askQueueDir,
             addLog: this.addLog
           });
           if (handled) continue;
+
+          // 3b. Evaluasi perintah utilitas umum di chat pribadi
+          //     (terbuka untuk semua lawan bicara dengan perlindungan anti-spam WhatsApp berlapis)
+          if (!isGroup) {
+            const handledUtility = await handleUtilityCommands({
+              waSocket: this.waSocket,
+              sendTrackedMessage: (jid, content, opts) => this.sendTrackedMessage(jid, content, opts),
+              downloadMediaBuffer: (target) => this.downloadMediaBuffer(target),
+              remoteJid,
+              senderKey: senderPhone || remoteJid,
+              fromMe: false,
+              isGroup: false,
+              profile,
+              messageText: cleanedText,
+              msg,
+              normalizedMessage,
+              toolRegistry: this.toolRegistry,
+              llm: this.llm,
+              antiSpamGuard: this.commandAntiSpam,
+              addLog: this.addLog
+            });
+            if (handledUtility) continue;
+          }
         }
+
+        // Jangan teruskan event 'append' ke balasan otomatis Artificial Intelligence
+        if (isAppend) continue;
 
         const allowed = this.contextManager.shouldReply(remoteJid, settings.whitelistOnly, altJid);
         if (!allowed) {
@@ -522,15 +836,7 @@ class BaileysService {
         if (isSticker) {
           let stickerDescription = '';
           try {
-            const stickerBuffer = await downloadMediaMessage(
-              msg,
-              'buffer',
-              {},
-              {
-                logger: this.logger,
-                reuploadRequest: this.waSocket.updateMediaMessage
-              }
-            );
+            const stickerBuffer = await this.downloadMediaBuffer(msg);
             if (stickerBuffer && stickerBuffer.length > 0) {
               stickerDescription = await this.llm.describeImage(stickerBuffer, 'image/webp');
             }
@@ -582,5 +888,9 @@ class BaileysService {
     this.cleanupPreviousSocket();
   }
 }
+
+BaileysService.createFilteredBaileysLogger = createFilteredBaileysLogger;
+BaileysService.shouldSuppressBaileysLog = shouldSuppressBaileysLog;
+BaileysService.formatCleanBaileysLog = formatCleanBaileysLog;
 
 module.exports = BaileysService;

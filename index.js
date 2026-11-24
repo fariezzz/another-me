@@ -72,6 +72,7 @@ function createServerApp(deps = {}) {
       llm,
       contextManager,
       knowledgeManager,
+      toolRegistry,
       settingsStore,
       addLog
     });

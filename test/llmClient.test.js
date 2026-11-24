@@ -233,3 +233,45 @@ test('describeImage retries transient 503 via postChatCompletion (BUG-07)', asyn
     global.fetch = originalFetch;
   }
 });
+
+test('answerSearchQuery strips thoughts, summarizes cleanly, and returns empty string on failure', async () => {
+  const originalFetch = global.fetch;
+
+  try {
+    global.fetch = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        choices: [
+          {
+            message: {
+              content: '<thought>Cek berita terbaru</thought>\npresiden Republik Indonesia saat ini adalah Prabowo Subianto.'
+            }
+          }
+        ]
+      })
+    });
+
+    const llm = new LLMClient({
+      baseUrl: 'http://127.0.0.1:4000/v1beta/openai',
+      model: 'gemma-4-26b-a4b-it',
+      retryDelaysMs: [10]
+    });
+    const answer = await llm.answerSearchQuery('Siapa presiden indonesia', [
+      { source: 'Berita', title: 'Presiden Prabowo', snippet: 'Presiden Prabowo (24 Nov 2026).' }
+    ]);
+    assert.equal(answer, 'Presiden Republik Indonesia saat ini adalah Prabowo Subianto.');
+
+    // Saat provider gagal -> kembalikan string kosong agar !cari fallback mulus tanpa throw
+    global.fetch = async () => ({
+      ok: false,
+      status: 500,
+      text: async () => 'server error',
+      headers: new Headers()
+    });
+    const fallback = await llm.answerSearchQuery('Siapa presiden indonesia', []);
+    assert.equal(fallback, '');
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
