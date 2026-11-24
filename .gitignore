@@ -19,6 +19,7 @@ data/settings.json
 data/knowledge_registry.json
 data/contact_jids.json
 data/ask-queue/
+data/emoji-cache/
 data/raw_chats/*
 !data/raw_chats/.gitkeep
 data/knowledge/*

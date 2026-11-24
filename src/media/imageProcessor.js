@@ -1,8 +1,9 @@
 /**
  * Mesin Pengolah Gambar & Meme Berbasis Sharp
  * Menangani validasi batas 5 Megabyte, konversi stiker WhatsApp (!sticker / !toimg / !wm),
- * meme teks latar putih blur tipis (!text / !stext), serta meme gaya Impact dengan
- * urutan blur dua tahap ketat (!cap: tempel teks dulu, lalu blur seluruh gambar hasil akhir).
+ * meme teks latar putih blur tipis (!text / !stext), serta meme gaya Impact untuk foto maupun
+ * stiker diam/bergerak (!cap) dengan dua mode blur yang diatur lewat variabel environment
+ * CAP_BLUR_MODE ('after' untuk blur sesudah caption, 'before' untuk blur sebelum caption).
  */
 
 const fs = require('fs');
@@ -24,10 +25,18 @@ if (process.platform !== 'win32' && !process.env.FONTCONFIG_FILE) {
 
 const sharp = require('sharp');
 const { injectWebpExif } = require('../utils/webpExif');
+const {
+  splitGraphemes,
+  isEmojiGrapheme,
+  hasEmoji,
+  splitLineIntoRuns,
+  fetchEmojiSvgBuffer
+} = require('../utils/emojiRenderer');
 
 const MAX_MEDIA_BYTES = parseInt(process.env.MAX_MEDIA_BYTES, 10) || 5 * 1024 * 1024; // 5 Megabyte
 const MAX_ANIMATED_STICKER_BYTES = 500 * 1024; // 500 Kilobyte agar pasti diterima & diputar WhatsApp
 const MAX_VIDEO_INPUT_SECONDS = 15;
+const MAX_CROP_VIDEO_SECONDS = 60;
 const DEFAULT_VIDEO_STICKER_SECONDS = clampNumber(
   parseInt(process.env.MAX_VIDEO_STICKER_SECONDS, 10),
   8,
@@ -44,9 +53,91 @@ const DEFAULT_TEXT_BLUR_SIGMA = clampNumber(parseFloat(process.env.TEXT_BLUR_SIG
 const DEFAULT_CAP_BLUR_SIGMA = clampNumber(
   parseFloat(process.env.CAP_BLUR_SIGMA || process.env.JMK_BLUR_SIGMA),
   2.8,
-  2.0,
-  4.0
+  0.8,
+  10.0
 );
+const FALLBACK_CAP_TEXT_BLUR_SIGMA = 1.0;
+const FALLBACK_CAP_MAX_DIM = 640;
+const VALID_CAP_BLUR_MODES = new Set(['before', 'after']);
+const MAX_ANIMATED_CAP_FRAMES = 96;
+
+function clampCapTextBlurSigma(value, fallback = FALLBACK_CAP_TEXT_BLUR_SIGMA) {
+  if (!Number.isFinite(value)) return fallback;
+  if (value < 0.3) return 0; // Nilai < 0.3 berarti teks tidak ikut didegradasi pada mode before
+  return Math.min(4.0, value);
+}
+
+function resolveCapMaxDim(overrideMaxDim) {
+  if (overrideMaxDim !== undefined && overrideMaxDim !== null && String(overrideMaxDim).trim() !== '') {
+    return Math.round(clampNumber(Number(overrideMaxDim), FALLBACK_CAP_MAX_DIM, 240, 1080));
+  }
+  const rawEnv = process.env.CAP_MAX_DIM;
+  if (rawEnv !== undefined && String(rawEnv).trim() !== '') {
+    return Math.round(clampNumber(parseInt(rawEnv, 10), FALLBACK_CAP_MAX_DIM, 240, 1080));
+  }
+  return FALLBACK_CAP_MAX_DIM;
+}
+
+function resolveCapBlurMode(overrideMode) {
+  const raw =
+    overrideMode !== undefined && overrideMode !== null && String(overrideMode).trim() !== ''
+      ? String(overrideMode)
+      : String(process.env.CAP_BLUR_MODE || 'after');
+  const normalized = raw.trim().toLowerCase();
+  return VALID_CAP_BLUR_MODES.has(normalized) ? normalized : 'after';
+}
+
+function resolveCapBlurSigma(overrideSigma) {
+  if (overrideSigma !== undefined && overrideSigma !== null && String(overrideSigma).trim() !== '') {
+    return clampNumber(Number(overrideSigma), DEFAULT_CAP_BLUR_SIGMA, 0.8, 10.0);
+  }
+  const envVal = parseFloat(
+    process.env.CAP_CRUSH_LEVEL || process.env.CAP_BLUR_SIGMA || process.env.JMK_BLUR_SIGMA
+  );
+  return clampNumber(envVal, DEFAULT_CAP_BLUR_SIGMA, 0.8, 10.0);
+}
+
+function resolveCapTextBlurSigma(overrideSigma) {
+  if (overrideSigma !== undefined && overrideSigma !== null && String(overrideSigma).trim() !== '') {
+    return clampCapTextBlurSigma(Number(overrideSigma), FALLBACK_CAP_TEXT_BLUR_SIGMA);
+  }
+  const rawEnv = process.env.CAP_TEXT_BLUR_SIGMA;
+  if (rawEnv !== undefined && String(rawEnv).trim() !== '') {
+    return clampCapTextBlurSigma(parseFloat(rawEnv), FALLBACK_CAP_TEXT_BLUR_SIGMA);
+  }
+  return FALLBACK_CAP_TEXT_BLUR_SIGMA;
+}
+
+/**
+ * Mengonversi nilai intensitas burik (CAP_BLUR_SIGMA / CAP_CRUSH_LEVEL, rentang 0.8-10.0, default 2.8)
+ * menjadi parameter siklus downscale -> kompresi kasar (JPEG/WebP) -> upscale khas meme shitpost.
+ */
+function computeCapDegradeParams(intensity) {
+  const level = clampNumber(Number(intensity), 2.8, 0.8, 10.0);
+  const scaleRatio = clampNumber(0.72 / (1 + 0.3 * level), 0.39, 0.16, 0.65);
+  const crushQuality = Math.round(clampNumber(64 / (1 + 0.56 * level), 25, 8, 55));
+  const finalQuality = Math.round(clampNumber(crushQuality + 16, 41, 18, 68));
+  return { level, scaleRatio, crushQuality, finalQuality };
+}
+
+/**
+ * Mengonversi nilai CAP_TEXT_BLUR_SIGMA (khusus mode 'before', rentang 0-4.0, default 1.0)
+ * menjadi parameter kompresi penyatu ringan agar tepi teks ikut agak burik menyatu dengan foto.
+ */
+function computeCapTextDegradeParams(textLevel) {
+  const level = clampCapTextBlurSigma(Number(textLevel), FALLBACK_CAP_TEXT_BLUR_SIGMA);
+  if (level < 0.3) {
+    return { enabled: false, level: 0, scaleRatio: 1, crushQuality: 84, finalQuality: 84 };
+  }
+  const scaleRatio = clampNumber(0.92 - 0.18 * level, 0.74, 0.36, 0.88);
+  const crushQuality = Math.round(clampNumber(62 - 18 * level, 44, 16, 62));
+  const finalQuality = Math.min(72, crushQuality + 10);
+  return { enabled: true, level, scaleRatio, crushQuality, finalQuality };
+}
+
+const DEFAULT_CAP_BLUR_MODE = resolveCapBlurMode();
+const DEFAULT_CAP_TEXT_BLUR_SIGMA = resolveCapTextBlurSigma();
+const DEFAULT_CAP_MAX_DIM = resolveCapMaxDim();
 
 class MediaValidationError extends Error {
   constructor(code, userMessage) {
@@ -77,20 +168,21 @@ function escapeXml(text) {
  * @param {'narrowSans'|'impact'} style
  */
 function estimateCharWidthEm(ch, style) {
+  if (isEmojiGrapheme(ch)) return 1.02;
   if (ch === ' ') return style === 'impact' ? 0.25 : 0.24;
   if ('iIljtf!|.,;:\'`'.includes(ch)) return style === 'impact' ? 0.28 : 0.27;
   if ('r()[]-/\\'.includes(ch)) return style === 'impact' ? 0.36 : 0.34;
   if ('MWmw@%#'.includes(ch)) return style === 'impact' ? 0.78 : 0.76;
   if (/[A-Z]/.test(ch)) return style === 'impact' ? 0.54 : 0.56;
   if (/[0-9]/.test(ch)) return style === 'impact' ? 0.52 : 0.50;
-  // Karakter non-ASCII (emoji / simbol lebar) diberi ruang aman lebih besar
+  // Karakter non-ASCII (simbol lebar lainnya) diberi ruang aman lebih besar
   if (ch.charCodeAt(0) > 127) return 0.92;
   return style === 'impact' ? 0.50 : 0.47;
 }
 
 function estimateTextWidthPx(text, fontSize, style) {
   let totalEm = 0;
-  for (const ch of Array.from(String(text || ''))) {
+  for (const ch of splitGraphemes(text)) {
     totalEm += estimateCharWidthEm(ch, style);
   }
   return totalEm * fontSize;
@@ -123,10 +215,10 @@ function wrapTextLines(rawText, fontSize, maxWidthPx, style) {
           lines.push(currentLine);
           currentLine = '';
         }
-        // Jika satu kata tunggal lebih lebar dari kotak, pecah per karakter secara aman
+        // Jika satu kata tunggal lebih lebar dari kotak, pecah per grapheme utuh (tidak membelah emoji ZWJ)
         if (estimateTextWidthPx(word, fontSize, style) > maxWidthPx) {
           let chunk = '';
-          for (const ch of Array.from(word)) {
+          for (const ch of splitGraphemes(word)) {
             if (chunk && estimateTextWidthPx(chunk + ch, fontSize, style) > maxWidthPx) {
               lines.push(chunk);
               chunk = ch;
@@ -705,11 +797,11 @@ function splitBalancedTwoLines(text, style) {
  * 3. Pecah ke 3 baris atau lebih hanya untuk kalimat yang sangat panjang.
  */
 function layoutImpactBlock(upperText, imgWidth, imgHeight) {
-  const maxWidth = imgWidth * 0.92;
-  const maxBlockHeight = imgHeight * 0.27;
-  const startSize = Math.max(24, Math.round(Math.min(imgWidth * 0.165, imgHeight * 0.145)));
+  const maxWidth = imgWidth * 0.94;
+  const maxBlockHeight = imgHeight * 0.29;
+  const startSize = Math.max(28, Math.round(Math.min(imgWidth * 0.23, imgHeight * 0.205)));
   const minSize = Math.max(18, Math.round(imgWidth * 0.042));
-  const lineHeightRatio = 1.08;
+  const lineHeightRatio = 1.06;
   const hasExplicitNewline = upperText.includes('\n');
 
   let chosenSize = minSize;
@@ -777,99 +869,78 @@ function layoutImpactBlock(upperText, imgWidth, imgHeight) {
 }
 
 /**
+ * Membangun potongan SVG dua lapis untuk satu baris teks Impact tanpa emoji.
+ */
+function buildSingleImpactSvgLine(lineText, { centerX, y, fontSize, strokeWidth }) {
+  const fontFamily = "'Impact', 'Anton', 'Arial Black', sans-serif";
+  const escaped = escapeXml(lineText);
+  return [
+    `<text x="${centerX}" y="${Math.round(y)}" text-anchor="middle" fill="none" stroke="#000000" stroke-width="${strokeWidth}" stroke-linejoin="round" stroke-linecap="round" font-family="${fontFamily}" font-size="${fontSize}" font-weight="900">${escaped}</text>`,
+    `<text x="${centerX}" y="${Math.round(y)}" text-anchor="middle" fill="#ffffff" stroke="none" font-family="${fontFamily}" font-size="${fontSize}" font-weight="900">${escaped}</text>`
+  ].join('\n  ');
+}
+
+/**
  * Membangun potongan SVG dua lapis (garis luar hitam tebal di bawah, isi putih di atas)
  * agar tampilan outline Impact selalu tajam dan konsisten di semua versi librsvg.
  */
 function buildImpactTextSvgNodes(lines, { centerX, startBaselineY, fontSize, strokeWidth, lineStep }) {
-  const fontFamily = "'Impact', 'Anton', 'Arial Black', sans-serif";
   const nodes = [];
-
   for (let i = 0; i < lines.length; i++) {
-    const y = Math.round(startBaselineY + i * lineStep);
-    const escaped = escapeXml(lines[i]);
-    // Lapisan 1: Outline hitam tebal
     nodes.push(
-      `<text x="${centerX}" y="${y}" text-anchor="middle" fill="none" stroke="#000000" stroke-width="${strokeWidth}" stroke-linejoin="round" stroke-linecap="round" font-family="${fontFamily}" font-size="${fontSize}" font-weight="900">${escaped}</text>`
-    );
-    // Lapisan 2: Isi putih bersih di atas outline
-    nodes.push(
-      `<text x="${centerX}" y="${y}" text-anchor="middle" fill="#ffffff" stroke="none" font-family="${fontFamily}" font-size="${fontSize}" font-weight="900">${escaped}</text>`
+      buildSingleImpactSvgLine(lines[i], {
+        centerX,
+        y: startBaselineY + i * lineStep,
+        fontSize,
+        strokeWidth
+      })
     );
   }
-
   return nodes.join('\n  ');
 }
 
 /**
- * Fitur 2: !cap <teks atas> | <teks bawah> (alias !caption / !burem / .cap / .caption)
- * PENTING: urutan pemrosesan ketat dua tahap:
- *   Tahap 1: Masukkan teks Impact kapital (isi putih, outline hitam tebal) ke foto asli sampai selesai.
- *   Tahap 2: BARU setelah teks selesai menempel di foto, blur SELURUH gambar hasil akhir
- *            dengan Gaussian blur ringan (2 sampai 4 piksel) agar foto dan teks ikut blur bareng.
+ * Memvalidasi dan menormalkan teks atas & bawah untuk perintah !cap.
  */
-async function renderCapMeme(
-  inputBuffer,
-  { topText = '', bottomText = '', blurSigma = DEFAULT_CAP_BLUR_SIGMA, returnStages = false } = {}
-) {
+function validateCapTexts(topText, bottomText) {
   const cleanTop = String(topText || '').trim().toUpperCase();
   const cleanBottom = String(bottomText || '').trim().toUpperCase();
 
   if (!cleanTop && !cleanBottom) {
     throw new MediaValidationError(
       'INVALID_TEXT',
-      'Pakai: kirim foto dengan caption atau balas foto dengan !cap <teks atas> | <teks bawah> (kalau cuma satu teks, otomatis ditaruh di bawah).'
+      'Pakai: kirim foto dengan caption atau balas foto/stiker dengan !cap <teks atas> | <teks bawah> (kalau cuma satu teks, otomatis ditaruh di bawah).'
     );
   }
 
   if (cleanTop.length + cleanBottom.length > 180) {
     throw new MediaValidationError(
       'TEXT_TOO_LONG',
-      'Maaf, teks untuk !cap kepanjangan (maksimal 180 karakter total) supaya tetap rapi di foto ya.'
+      'Maaf, teks untuk !cap kepanjangan (maksimal 180 karakter total) supaya tetap rapi ya.'
     );
   }
 
-  const meta = await validateImageBuffer(inputBuffer);
+  return { cleanTop, cleanBottom };
+}
 
-  // Pra-tahap: perbaiki rotasi EXIF dan normalkan ukuran (maksimal 1080 piksel, minimal 480 piksel
-  // untuk thumbnail kecil) agar efek blur 2-4 piksel selalu seragam di segala resolusi kamera.
-  let basePipeline = sharp(inputBuffer, { limitInputPixels: LIMIT_INPUT_PIXELS }).rotate();
-  const maxDim = Math.max(meta.width || 0, meta.height || 0);
-  if (maxDim > 1080) {
-    basePipeline = basePipeline.resize({
-      width: 1080,
-      height: 1080,
-      fit: 'inside',
-      withoutEnlargement: true
-    });
-  } else if (maxDim > 0 && maxDim < 480) {
-    basePipeline = basePipeline.resize({
-      width: 600,
-      height: 600,
-      fit: 'inside',
-      withoutEnlargement: false
-    });
-  }
-
-  const normalized = await basePipeline.png().toBuffer({ resolveWithObject: true });
-  const imgWidth = normalized.info.width;
-  const imgHeight = normalized.info.height;
-  const centerX = Math.round(imgWidth / 2);
+/**
+ * Menghitung tata letak seluruh baris teks atas dan/atau bawah untuk !cap.
+ */
+function computeCapLineDescriptors({ imgWidth, imgHeight, cleanTop, cleanBottom }) {
   const edgeMarginY = Math.max(12, Math.round(imgHeight * 0.032));
-
-  const svgParts = [];
+  const descriptors = [];
 
   if (cleanTop) {
     const topLayout = layoutImpactBlock(cleanTop, imgWidth, imgHeight);
     const topStartY = edgeMarginY + Math.round(topLayout.fontSize * 0.88);
-    svgParts.push(
-      buildImpactTextSvgNodes(topLayout.lines, {
-        centerX,
-        startBaselineY: topStartY,
+    for (let i = 0; i < topLayout.lines.length; i++) {
+      descriptors.push({
+        lineText: topLayout.lines[i],
+        baselineY: Math.round(topStartY + i * topLayout.lineStep),
         fontSize: topLayout.fontSize,
-        strokeWidth: topLayout.strokeWidth,
-        lineStep: topLayout.lineStep
-      })
-    );
+        strokeWidth: topLayout.strokeWidth
+      });
+    }
   }
 
   if (cleanBottom) {
@@ -881,68 +952,1119 @@ async function renderCapMeme(
       Math.round(imgHeight * 0.55),
       bottomLastBaselineY - totalLinesOffset
     );
-    svgParts.push(
-      buildImpactTextSvgNodes(bottomLayout.lines, {
-        centerX,
-        startBaselineY: bottomStartY,
+    for (let i = 0; i < bottomLayout.lines.length; i++) {
+      descriptors.push({
+        lineText: bottomLayout.lines[i],
+        baselineY: Math.round(bottomStartY + i * bottomLayout.lineStep),
         fontSize: bottomLayout.fontSize,
-        strokeWidth: bottomLayout.strokeWidth,
-        lineStep: bottomLayout.lineStep
-      })
-    );
+        strokeWidth: bottomLayout.strokeWidth
+      });
+    }
   }
 
-  const overlaySvg = `<?xml version="1.0" encoding="UTF-8"?>
+  return descriptors;
+}
+
+/**
+ * Membangun lapisan SVG transparan berisi teks gaya Impact (atas dan/atau bawah)
+ * yang siap ditempelkan ke foto maupun stiker.
+ */
+function buildCapOverlaySvg({ imgWidth, imgHeight, cleanTop, cleanBottom }) {
+  const centerX = Math.round(imgWidth / 2);
+  const descriptors = computeCapLineDescriptors({ imgWidth, imgHeight, cleanTop, cleanBottom });
+  const svgParts = descriptors.map((d) =>
+    buildSingleImpactSvgLine(d.lineText, {
+      centerX,
+      y: d.baselineY,
+      fontSize: d.fontSize,
+      strokeWidth: d.strokeWidth
+    })
+  );
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
 <svg width="${imgWidth}" height="${imgHeight}" viewBox="0 0 ${imgWidth} ${imgHeight}" xmlns="http://www.w3.org/2000/svg">
   ${svgParts.join('\n  ')}
 </svg>`;
+}
 
-  // =========================================================================
-  // TAHAP 1: Tempelkan teks Impact ke foto terlebih dahulu sampai selesai.
-  // Belum ada blur sama sekali pada foto maupun teks pada tahap ini.
-  // =========================================================================
-  const composedBuffer = await sharp(normalized.data)
-    .composite([{ input: Buffer.from(overlaySvg, 'utf-8'), top: 0, left: 0 }])
+/**
+ * Merender satu baris campuran teks Impact + emoji berwarna penuh menjadi strip PNG RGBA
+ * dengan pengukuran batas piksel teks yang presisi sehingga posisi emoji tidak pernah bertumpuk
+ * maupun terlalu renggang, lalu disejajarkan tepat dengan garis dasar (baseline) teks.
+ */
+async function renderMixedImpactLineStrip({
+  lineText,
+  fontSize,
+  strokeWidth,
+  imgWidth,
+  emojiSvgMap
+}) {
+  const fontFamily = "'Impact', 'Anton', 'Arial Black', sans-serif";
+  const rawRuns = splitLineIntoRuns(lineText);
+
+  // Gabungkan emoji yang gagal diambil ke segmen teks agar tetap tampil sebagai fallback
+  const runs = [];
+  for (const run of rawRuns) {
+    if (run.type === 'emoji' && emojiSvgMap.get(run.value)) {
+      runs.push(run);
+    } else {
+      const prev = runs[runs.length - 1];
+      if (prev && prev.type === 'text') {
+        prev.value += run.value;
+      } else {
+        runs.push({ type: 'text', value: run.value });
+      }
+    }
+  }
+
+  const spacePx = Math.max(6, Math.round(fontSize * 0.28));
+  const emojiSize = Math.max(16, Math.round(fontSize * 0.96));
+  const pad = Math.ceil(strokeWidth * 1.4);
+  const baselineOffsetY = Math.round(fontSize * 0.96) + pad;
+  const stripHeight = Math.round(fontSize * 1.25) + pad * 2;
+  const items = [];
+
+  for (const run of runs) {
+    if (run.type === 'emoji') {
+      const svgBuf = emojiSvgMap.get(run.value);
+      const emojiPng = await sharp(svgBuf)
+        .resize(emojiSize, emojiSize, {
+          fit: 'contain',
+          background: { r: 0, g: 0, b: 0, alpha: 0 }
+        })
+        .ensureAlpha()
+        .png()
+        .toBuffer();
+      const emojiTop = Math.max(
+        0,
+        Math.min(stripHeight - emojiSize, Math.round(baselineOffsetY - emojiSize * 0.87))
+      );
+      items.push({
+        kind: 'emoji',
+        buffer: emojiPng,
+        width: emojiSize,
+        height: emojiSize,
+        top: emojiTop
+      });
+    } else {
+      const leadingSpaces = (run.value.match(/^\s+/) || [''])[0].length;
+      const trailingSpaces = (run.value.match(/\s+$/) || [''])[0].length;
+      const core = run.value.trim();
+
+      if (leadingSpaces > 0) {
+        items.push({ kind: 'space', width: leadingSpaces * spacePx });
+      }
+      if (core) {
+        const estW = Math.max(
+          160,
+          Math.ceil(estimateTextWidthPx(core, fontSize, 'impact') * 1.55) + pad * 6
+        );
+        const escaped = escapeXml(core);
+        const segSvg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg width="${estW}" height="${stripHeight}" viewBox="0 0 ${estW} ${stripHeight}" xmlns="http://www.w3.org/2000/svg">
+  <text x="${pad * 2}" y="${baselineOffsetY}" text-anchor="start" fill="none" stroke="#000000" stroke-width="${strokeWidth}" stroke-linejoin="round" stroke-linecap="round" font-family="${fontFamily}" font-size="${fontSize}" font-weight="900">${escaped}</text>
+  <text x="${pad * 2}" y="${baselineOffsetY}" text-anchor="start" fill="#ffffff" stroke="none" font-family="${fontFamily}" font-size="${fontSize}" font-weight="900">${escaped}</text>
+</svg>`;
+        const rendered = await sharp(Buffer.from(segSvg, 'utf-8')).ensureAlpha().png().toBuffer();
+        const { data, info } = await sharp(rendered)
+          .ensureAlpha()
+          .raw()
+          .toBuffer({ resolveWithObject: true });
+
+        let minX = info.width;
+        let maxX = -1;
+        for (let y = 0; y < info.height; y++) {
+          const rowStart = y * info.width * 4;
+          for (let x = 0; x < info.width; x++) {
+            if (data[rowStart + x * 4 + 3] > 8) {
+              if (x < minX) minX = x;
+              if (x > maxX) maxX = x;
+            }
+          }
+        }
+        if (maxX >= minX) {
+          const cropW = maxX - minX + 1;
+          const tightPng = await sharp(rendered)
+            .extract({ left: minX, top: 0, width: cropW, height: info.height })
+            .png()
+            .toBuffer();
+          items.push({
+            kind: 'text',
+            buffer: tightPng,
+            width: cropW,
+            height: info.height,
+            top: 0
+          });
+        }
+      }
+      if (trailingSpaces > 0) {
+        items.push({ kind: 'space', width: trailingSpaces * spacePx });
+      }
+    }
+  }
+
+  if (items.length === 0) return null;
+
+  // Jarak tipis alami saat huruf & emoji langsung bersebelahan tanpa spasi (misal "BRO😹")
+  const touchGap = Math.max(4, Math.round(fontSize * 0.08));
+  let totalWidth = 0;
+  const composites = [];
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    if (i > 0 && it.kind !== 'space' && items[i - 1].kind !== 'space') {
+      totalWidth += touchGap;
+    }
+    if (it.buffer) {
+      composites.push({ input: it.buffer, left: totalWidth, top: it.top });
+    }
+    totalWidth += it.width;
+  }
+
+  if (composites.length === 0 || totalWidth <= 0) return null;
+
+  let stripBuf = await sharp({
+    create: {
+      width: totalWidth,
+      height: stripHeight,
+      channels: 4,
+      background: { r: 0, g: 0, b: 0, alpha: 0 }
+    }
+  })
+    .composite(composites)
     .png()
     .toBuffer();
 
-  // =========================================================================
-  // TAHAP 2: Setelah foto + teks menyatu sempurna, blur SELURUH gambar akhir
-  // secara bersamaan (Gaussian blur ringan 2.0 - 4.0 piksel).
-  // =========================================================================
-  const safeSigma = clampNumber(Number(blurSigma), DEFAULT_CAP_BLUR_SIGMA, 2.0, 4.0);
-  const finalBuffer = await sharp(composedBuffer)
-    .blur(safeSigma)
-    .jpeg({ quality: 90, mozjpeg: true })
+  const maxLineWidth = Math.max(32, Math.round(imgWidth * 0.94));
+  let finalWidth = totalWidth;
+  let finalHeight = stripHeight;
+  let finalBaselineOffsetY = baselineOffsetY;
+
+  if (totalWidth > maxLineWidth) {
+    const scale = maxLineWidth / totalWidth;
+    finalWidth = maxLineWidth;
+    finalHeight = Math.max(1, Math.round(stripHeight * scale));
+    finalBaselineOffsetY = Math.round(baselineOffsetY * scale);
+    stripBuf = await sharp(stripBuf).resize(finalWidth, finalHeight).png().toBuffer();
+  }
+
+  return {
+    buffer: stripBuf,
+    width: finalWidth,
+    height: finalHeight,
+    baselineOffsetY: finalBaselineOffsetY
+  };
+}
+
+/**
+ * Merender lapisan teks Impact (beserta emoji berwarna penuh Twemoji bila ada) menjadi PNG RGBA.
+ * Jika textBlurSigma >= 0.3 (khusus mode 'before'), seluruh lapisan teks & emoji ikut di-blur tipis terpisah.
+ */
+async function renderCapOverlayPng({
+  imgWidth,
+  imgHeight,
+  cleanTop,
+  cleanBottom,
+  textBlurSigma = 0,
+  emojiOptions = {}
+}) {
+  const centerX = Math.round(imgWidth / 2);
+  const descriptors = computeCapLineDescriptors({ imgWidth, imgHeight, cleanTop, cleanBottom });
+  const pureSvgParts = [];
+  const emojiDescriptors = [];
+
+  for (const desc of descriptors) {
+    if (hasEmoji(desc.lineText)) {
+      emojiDescriptors.push(desc);
+    } else {
+      pureSvgParts.push(
+        buildSingleImpactSvgLine(desc.lineText, {
+          centerX,
+          y: desc.baselineY,
+          fontSize: desc.fontSize,
+          strokeWidth: desc.strokeWidth
+        })
+      );
+    }
+  }
+
+  let overlayPng;
+
+  if (emojiDescriptors.length === 0) {
+    const overlaySvg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg width="${imgWidth}" height="${imgHeight}" viewBox="0 0 ${imgWidth} ${imgHeight}" xmlns="http://www.w3.org/2000/svg">
+  ${pureSvgParts.join('\n  ')}
+</svg>`;
+    overlayPng = await sharp(Buffer.from(overlaySvg, 'utf-8'))
+      .resize(imgWidth, imgHeight)
+      .ensureAlpha()
+      .png()
+      .toBuffer();
+  } else {
+    // Ambil seluruh ikon SVG emoji unik secara paralel (instan dari cache jika sudah pernah dipakai)
+    const uniqueEmojiRuns = new Map();
+    for (const desc of emojiDescriptors) {
+      for (const run of splitLineIntoRuns(desc.lineText)) {
+        if (run.type === 'emoji' && !uniqueEmojiRuns.has(run.value)) {
+          uniqueEmojiRuns.set(run.value, run.candidates);
+        }
+      }
+    }
+
+    const emojiSvgMap = new Map();
+    await Promise.all(
+      Array.from(uniqueEmojiRuns.entries()).map(async ([emojiStr, candidates]) => {
+        const svgBuf = await fetchEmojiSvgBuffer(candidates, emojiOptions);
+        if (svgBuf) {
+          emojiSvgMap.set(emojiStr, svgBuf);
+        }
+      })
+    );
+
+    const stripComposites = [];
+    for (const desc of emojiDescriptors) {
+      const hasResolvedEmoji = splitLineIntoRuns(desc.lineText).some(
+        (run) => run.type === 'emoji' && emojiSvgMap.has(run.value)
+      );
+      if (!hasResolvedEmoji) {
+        // Fallback aman jika seluruh emoji gagal diambil (misal offline total & belum di-cache)
+        pureSvgParts.push(
+          buildSingleImpactSvgLine(desc.lineText, {
+            centerX,
+            y: desc.baselineY,
+            fontSize: desc.fontSize,
+            strokeWidth: desc.strokeWidth
+          })
+        );
+        continue;
+      }
+
+      const strip = await renderMixedImpactLineStrip({
+        lineText: desc.lineText,
+        fontSize: desc.fontSize,
+        strokeWidth: desc.strokeWidth,
+        imgWidth,
+        emojiSvgMap
+      });
+      if (strip) {
+        const left = Math.max(0, Math.round((imgWidth - strip.width) / 2));
+        const top = Math.max(
+          0,
+          Math.min(imgHeight - strip.height, Math.round(desc.baselineY - strip.baselineOffsetY))
+        );
+        stripComposites.push({ input: strip.buffer, left, top });
+      }
+    }
+
+    let baseCanvas;
+    if (pureSvgParts.length > 0) {
+      const baseSvg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg width="${imgWidth}" height="${imgHeight}" viewBox="0 0 ${imgWidth} ${imgHeight}" xmlns="http://www.w3.org/2000/svg">
+  ${pureSvgParts.join('\n  ')}
+</svg>`;
+      baseCanvas = await sharp(Buffer.from(baseSvg, 'utf-8'))
+        .resize(imgWidth, imgHeight)
+        .ensureAlpha()
+        .png()
+        .toBuffer();
+    } else {
+      baseCanvas = await sharp({
+        create: {
+          width: imgWidth,
+          height: imgHeight,
+          channels: 4,
+          background: { r: 0, g: 0, b: 0, alpha: 0 }
+        }
+      })
+        .png()
+        .toBuffer();
+    }
+
+    overlayPng =
+      stripComposites.length > 0
+        ? await sharp(baseCanvas).composite(stripComposites).png().toBuffer()
+        : baseCanvas;
+  }
+
+  // Blur tipis khusus mode 'before' diterapkan SETELAH seluruh teks & emoji selesai disusun
+  if (textBlurSigma >= 0.3) {
+    return await sharp(overlayPng).blur(textBlurSigma).png().toBuffer();
+  }
+
+  return overlayPng;
+}
+
+/**
+ * Mengurangi jumlah bingkai animasi dengan menggabungkan jeda (delay) bingkai yang dilewati
+ * agar kecepatan putar total animasi tetap sama dan minimal menyisakan 2 bingkai.
+ */
+function subsampleFrames(frames, delays, step) {
+  if (step <= 1 || frames.length <= 2) {
+    return { frames, delays };
+  }
+  const effectiveStep = Math.max(1, Math.min(step, frames.length - 1));
+  const outFrames = [];
+  const outDelays = [];
+  for (let i = 0; i < frames.length; i += effectiveStep) {
+    outFrames.push(frames[i]);
+    let summedDelay = 0;
+    for (let j = i; j < Math.min(frames.length, i + effectiveStep); j++) {
+      summedDelay += delays[j] || 80;
+    }
+    outDelays.push(summedDelay);
+  }
+  return { frames: outFrames, delays: outDelays };
+}
+
+/**
+ * Menerapkan siklus degradasi "burik" khas meme shitpost pada foto (tanpa Gaussian blur halus):
+ * perkecil resolusi (downscale) -> kompres JPEG kualitas rendah tanpa mozjpeg (blok 8x8 DCT + mosquito noise)
+ * -> tarik balik (upscale) ke ukuran kanvas target.
+ */
+async function degradePhotoCrustyJpeg(
+  pngBuffer,
+  { width, height, scaleRatio, crushQuality, finalQuality, returnPng = false }
+) {
+  const crushW = Math.max(64, Math.round(width * scaleRatio));
+  const crushH = Math.max(64, Math.round(height * scaleRatio));
+
+  const tinyJpg = await sharp(pngBuffer)
+    .resize(crushW, crushH, { kernel: 'cubic', fit: 'fill' })
+    .jpeg({ quality: crushQuality, mozjpeg: false, chromaSubsampling: '4:2:0' })
     .toBuffer();
+
+  const upscaled = sharp(tinyJpg).resize(width, height, { kernel: 'linear', fit: 'fill' });
+  if (returnPng) {
+    return await upscaled.png().toBuffer();
+  }
+  return await upscaled
+    .jpeg({ quality: finalQuality, mozjpeg: false, chromaSubsampling: '4:2:0' })
+    .toBuffer();
+}
+
+/**
+ * Menerapkan siklus degradasi "burik" yang setara untuk stiker WebP bertransparansi (RGBA):
+ * perkecil resolusi -> kompres WebP lossy kasar (tetap menjaga saluran alpha!) -> tarik balik ke 512x512.
+ */
+async function degradeRgbaStickerCrusty(
+  inputBuf,
+  { isRaw = false, width, height, scaleRatio, crushQuality, returnRaw = false }
+) {
+  const crushW = Math.max(64, Math.round(width * scaleRatio));
+  const crushH = Math.max(64, Math.round(height * scaleRatio));
+
+  const srcPipeline = isRaw
+    ? sharp(inputBuf, { raw: { width, height, channels: 4 } })
+    : sharp(inputBuf);
+
+  const tinyWebp = await srcPipeline
+    .resize(crushW, crushH, { kernel: 'cubic', fit: 'fill' })
+    .webp({ quality: crushQuality, effort: 1, alphaQuality: 78 })
+    .toBuffer();
+
+  const upscaled = sharp(tinyWebp)
+    .resize(width, height, { kernel: 'linear', fit: 'fill' })
+    .ensureAlpha();
+
+  return returnRaw ? await upscaled.raw().toBuffer() : await upscaled.png().toBuffer();
+}
+
+/**
+ * Fitur 2a: !cap <teks atas> | <teks bawah> pada foto (alias !caption / !burem / .cap / .caption)
+ * Menghasilkan gaya meme shitpost "burik" (downscale -> kompresi JPEG rendah -> upscale, bukan blur lensa)
+ * dengan dua mode urutan yang diatur lewat variabel environment CAP_BLUR_MODE:
+ * - 'after' (bawaan, gaya PENGALAMAN PAHIT / IJIN TAMPIL):
+ *     Tahap 1: Tempel teks Impact besar + emoji berwarna ke foto terlebih dahulu.
+ *     Tahap 2: Burikkan SELURUH gambar hasil akhir bersama teks secara seragam.
+ * - 'before' (gaya KESALAHAN POLA PIKIR / BERSIAPLAH):
+ *     Tahap 1: Burikkan foto dasar terlebih dahulu sebelum teks.
+ *     Tahap 2: Tempel teks Impact besar + emoji berwarna, lalu beri kompresi penyatu ringan (CAP_TEXT_BLUR_SIGMA).
+ */
+async function renderCapMeme(
+  inputBuffer,
+  {
+    topText = '',
+    bottomText = '',
+    blurSigma,
+    textBlurSigma,
+    blurMode,
+    maxDim: overrideMaxDim,
+    emojiOptions,
+    returnStages = false
+  } = {}
+) {
+  const { cleanTop, cleanBottom } = validateCapTexts(topText, bottomText);
+  const meta = await validateImageBuffer(inputBuffer);
+  const activeBlurMode = resolveCapBlurMode(blurMode);
+  const safeSigma = resolveCapBlurSigma(blurSigma);
+  const activeTextBlurSigma =
+    activeBlurMode === 'before' ? resolveCapTextBlurSigma(textBlurSigma) : 0;
+  const targetMaxDim = resolveCapMaxDim(overrideMaxDim);
+  const degradeParams = computeCapDegradeParams(safeSigma);
+  const textDegradeParams = computeCapTextDegradeParams(activeTextBlurSigma);
+
+  // Pra-tahap: perbaiki rotasi EXIF dan normalkan ukuran kanvas ke CAP_MAX_DIM (bawaan 640 piksel)
+  // agar artefak pecah JPEG hasil downscale->upscale tetap terlihat tegas saat ditampilkan WhatsApp.
+  let basePipeline = sharp(inputBuffer, { limitInputPixels: LIMIT_INPUT_PIXELS }).rotate();
+  const srcMaxDim = Math.max(meta.width || 0, meta.height || 0);
+  const minDim = Math.min(360, targetMaxDim);
+  if (srcMaxDim > targetMaxDim) {
+    basePipeline = basePipeline.resize({
+      width: targetMaxDim,
+      height: targetMaxDim,
+      fit: 'inside',
+      withoutEnlargement: true
+    });
+  } else if (srcMaxDim > 0 && srcMaxDim < minDim) {
+    basePipeline = basePipeline.resize({
+      width: targetMaxDim,
+      height: targetMaxDim,
+      fit: 'inside',
+      withoutEnlargement: false
+    });
+  }
+
+  const normalized = await basePipeline.png().toBuffer({ resolveWithObject: true });
+  const imgWidth = normalized.info.width;
+  const imgHeight = normalized.info.height;
+  const overlayPng = await renderCapOverlayPng({
+    imgWidth,
+    imgHeight,
+    cleanTop,
+    cleanBottom,
+    textBlurSigma: 0,
+    emojiOptions
+  });
+
+  let stage1Buffer;
+  let finalBuffer;
+
+  if (activeBlurMode === 'before') {
+    // =========================================================================
+    // MODE BEFORE — TAHAP 1: Burikkan foto dasar terlebih dahulu (downscale -> JPEG -> upscale).
+    // =========================================================================
+    stage1Buffer = await degradePhotoCrustyJpeg(normalized.data, {
+      width: imgWidth,
+      height: imgHeight,
+      scaleRatio: degradeParams.scaleRatio,
+      crushQuality: degradeParams.crushQuality,
+      finalQuality: degradeParams.finalQuality,
+      returnPng: true
+    });
+
+    // =========================================================================
+    // MODE BEFORE — TAHAP 2: Tempel teks Impact besar + emoji berwarna, lalu
+    // beri satu lapis kompresi JPEG penyatu ringan bila CAP_TEXT_BLUR_SIGMA >= 0.3.
+    // =========================================================================
+    const composited = await sharp(stage1Buffer)
+      .composite([{ input: overlayPng, top: 0, left: 0 }])
+      .png()
+      .toBuffer();
+
+    if (textDegradeParams.enabled) {
+      finalBuffer = await degradePhotoCrustyJpeg(composited, {
+        width: imgWidth,
+        height: imgHeight,
+        scaleRatio: textDegradeParams.scaleRatio,
+        crushQuality: textDegradeParams.crushQuality,
+        finalQuality: textDegradeParams.finalQuality,
+        returnPng: false
+      });
+    } else {
+      finalBuffer = await sharp(composited)
+        .jpeg({ quality: 84, mozjpeg: false, chromaSubsampling: '4:2:0' })
+        .toBuffer();
+    }
+  } else {
+    // =========================================================================
+    // MODE AFTER — TAHAP 1: Tempelkan teks Impact besar + emoji berwarna ke foto.
+    // =========================================================================
+    stage1Buffer = await sharp(normalized.data)
+      .composite([{ input: overlayPng, top: 0, left: 0 }])
+      .png()
+      .toBuffer();
+
+    // =========================================================================
+    // MODE AFTER — TAHAP 2: Setelah foto + teks menyatu, burikkan SELURUH gambar
+    // secara bersamaan (downscale -> JPEG rendah tanpa mozjpeg -> upscale).
+    // =========================================================================
+    finalBuffer = await degradePhotoCrustyJpeg(stage1Buffer, {
+      width: imgWidth,
+      height: imgHeight,
+      scaleRatio: degradeParams.scaleRatio,
+      crushQuality: degradeParams.crushQuality,
+      finalQuality: degradeParams.finalQuality,
+      returnPng: false
+    });
+  }
 
   if (returnStages) {
     return {
-      composedBuffer,
+      blurMode: activeBlurMode,
+      stage1Buffer,
+      composedBuffer: activeBlurMode === 'after' ? stage1Buffer : null,
+      blurredBaseBuffer: activeBlurMode === 'before' ? stage1Buffer : null,
       finalBuffer,
       width: imgWidth,
       height: imgHeight,
-      blurSigma: safeSigma
+      blurSigma: safeSigma,
+      textBlurSigma: activeTextBlurSigma
     };
   }
 
   return finalBuffer;
 }
 
+/**
+ * Fitur 2b: !cap <teks atas> | <teks bawah> khusus untuk stiker WebP (diam maupun bergerak).
+ * Hasil tetap berbentuk stiker WhatsApp WebP 512x512 dengan metadata EXIF & transparansi terjaga,
+ * memakai siklus degradasi burik WebP lossy (downscale -> WebP kasar -> upscale) mengikuti
+ * CAP_BLUR_MODE ('after' atau 'before') serta CAP_TEXT_BLUR_SIGMA khusus pada mode 'before'.
+ * Untuk stiker bergerak (> 1 bingkai), tiap bingkai diproses terpisah tanpa rembesan antar bingkai
+ * dan dikompresi adaptif agar hasil akhir termasuk EXIF selalu <= 500 Kilobyte.
+ */
+async function renderCapSticker(
+  webpBuffer,
+  {
+    topText = '',
+    bottomText = '',
+    blurSigma,
+    textBlurSigma,
+    blurMode,
+    emojiOptions,
+    packName = DEFAULT_PACK_NAME,
+    author = DEFAULT_PACK_AUTHOR,
+    returnStages = false
+  } = {}
+) {
+  const { cleanTop, cleanBottom } = validateCapTexts(topText, bottomText);
+  const meta = await validateImageBuffer(webpBuffer, { requireWebp: true });
+  const activeBlurMode = resolveCapBlurMode(blurMode);
+  const safeSigma = resolveCapBlurSigma(blurSigma);
+  const activeTextBlurSigma =
+    activeBlurMode === 'before' ? resolveCapTextBlurSigma(textBlurSigma) : 0;
+  const degradeParams = computeCapDegradeParams(safeSigma);
+  const textDegradeParams = computeCapTextDegradeParams(activeTextBlurSigma);
+  const targetSize = 512;
+
+  const overlayPng = await renderCapOverlayPng({
+    imgWidth: targetSize,
+    imgHeight: targetSize,
+    cleanTop,
+    cleanBottom,
+    textBlurSigma: 0,
+    emojiOptions
+  });
+
+  const isAnimated = Boolean(meta.pages && meta.pages > 1);
+
+  if (!isAnimated) {
+    const basePng = await sharp(webpBuffer, {
+      limitInputPixels: LIMIT_INPUT_PIXELS,
+      page: 0
+    })
+      .rotate()
+      .resize({
+        width: targetSize,
+        height: targetSize,
+        fit: 'contain',
+        background: { r: 0, g: 0, b: 0, alpha: 0 }
+      })
+      .ensureAlpha()
+      .png()
+      .toBuffer();
+
+    let stage1Buffer;
+    let webpRaw;
+
+    if (activeBlurMode === 'before') {
+      stage1Buffer = await degradeRgbaStickerCrusty(basePng, {
+        isRaw: false,
+        width: targetSize,
+        height: targetSize,
+        scaleRatio: degradeParams.scaleRatio,
+        crushQuality: degradeParams.crushQuality,
+        returnRaw: false
+      });
+
+      const composited = await sharp(stage1Buffer)
+        .composite([{ input: overlayPng, top: 0, left: 0 }])
+        .png()
+        .toBuffer();
+
+      const finalPng = textDegradeParams.enabled
+        ? await degradeRgbaStickerCrusty(composited, {
+            isRaw: false,
+            width: targetSize,
+            height: targetSize,
+            scaleRatio: textDegradeParams.scaleRatio,
+            crushQuality: textDegradeParams.crushQuality,
+            returnRaw: false
+          })
+        : composited;
+
+      webpRaw = await sharp(finalPng)
+        .webp({ quality: textDegradeParams.enabled ? textDegradeParams.finalQuality : 84, effort: 4 })
+        .toBuffer();
+    } else {
+      stage1Buffer = await sharp(basePng)
+        .composite([{ input: overlayPng, top: 0, left: 0 }])
+        .png()
+        .toBuffer();
+
+      const degradedPng = await degradeRgbaStickerCrusty(stage1Buffer, {
+        isRaw: false,
+        width: targetSize,
+        height: targetSize,
+        scaleRatio: degradeParams.scaleRatio,
+        crushQuality: degradeParams.crushQuality,
+        returnRaw: false
+      });
+
+      webpRaw = await sharp(degradedPng)
+        .webp({ quality: degradeParams.finalQuality, effort: 4 })
+        .toBuffer();
+    }
+
+    const finalBuffer = injectWebpExif(webpRaw, {
+      packName,
+      author,
+      width: targetSize,
+      height: targetSize,
+      hasAlpha: true
+    });
+
+    if (returnStages) {
+      return {
+        isAnimated: false,
+        blurMode: activeBlurMode,
+        stage1Buffer,
+        composedBuffer: activeBlurMode === 'after' ? stage1Buffer : null,
+        blurredBaseBuffer: activeBlurMode === 'before' ? stage1Buffer : null,
+        finalBuffer,
+        width: targetSize,
+        height: targetSize,
+        pages: 1,
+        blurSigma: safeSigma,
+        textBlurSigma: activeTextBlurSigma
+      };
+    }
+
+    return finalBuffer;
+  }
+
+  // Cabang stiker bergerak (> 1 bingkai)
+  const totalPages = meta.pages;
+  const frameW = meta.width;
+  const frameH = meta.pageHeight || meta.height;
+  const rawDelays =
+    Array.isArray(meta.delay) && meta.delay.length === totalPages
+      ? meta.delay.map((d) => (Number.isFinite(d) && d > 0 ? Math.round(d) : 80))
+      : Array(totalPages).fill(80);
+
+  const initialStep =
+    totalPages > MAX_ANIMATED_CAP_FRAMES ? Math.ceil(totalPages / MAX_ANIMATED_CAP_FRAMES) : 1;
+
+  const sourceFrames = [];
+  const frameDelays = [];
+
+  let decodedWhole = false;
+  if (initialStep === 1 && totalPages * frameW * frameH <= LIMIT_INPUT_PIXELS) {
+    try {
+      const decoded = await sharp(webpBuffer, {
+        animated: true,
+        limitInputPixels: LIMIT_INPUT_PIXELS
+      })
+        .ensureAlpha()
+        .raw()
+        .toBuffer({ resolveWithObject: true });
+
+      if (decoded.info.width === frameW && decoded.info.height === frameH * totalPages) {
+        const frameBytes = frameW * frameH * 4;
+        for (let i = 0; i < totalPages; i++) {
+          sourceFrames.push(decoded.data.subarray(i * frameBytes, (i + 1) * frameBytes));
+          frameDelays.push(rawDelays[i]);
+        }
+        decodedWhole = true;
+      }
+    } catch {
+      decodedWhole = false;
+    }
+  }
+
+  if (!decodedWhole) {
+    for (let i = 0; i < totalPages; i += initialStep) {
+      const pageRaw = await sharp(webpBuffer, {
+        page: i,
+        pages: 1,
+        limitInputPixels: LIMIT_INPUT_PIXELS
+      })
+        .ensureAlpha()
+        .raw()
+        .toBuffer();
+      sourceFrames.push(pageRaw);
+
+      let summedDelay = 0;
+      for (let j = i; j < Math.min(totalPages, i + initialStep); j++) {
+        summedDelay += rawDelays[j] || 80;
+      }
+      frameDelays.push(summedDelay);
+    }
+  }
+
+  const processedFrames = [];
+  let stage1Frame0Buffer = null;
+
+  for (let i = 0; i < sourceFrames.length; i++) {
+    let normalizedFrameRaw = sourceFrames[i];
+    if (frameW !== targetSize || frameH !== targetSize) {
+      normalizedFrameRaw = await sharp(sourceFrames[i], {
+        raw: { width: frameW, height: frameH, channels: 4 }
+      })
+        .resize({
+          width: targetSize,
+          height: targetSize,
+          fit: 'contain',
+          background: { r: 0, g: 0, b: 0, alpha: 0 }
+        })
+        .ensureAlpha()
+        .raw()
+        .toBuffer();
+    }
+
+    let stage1Raw;
+    let finalFrameRaw;
+
+    if (activeBlurMode === 'before') {
+      stage1Raw = await degradeRgbaStickerCrusty(normalizedFrameRaw, {
+        isRaw: true,
+        width: targetSize,
+        height: targetSize,
+        scaleRatio: degradeParams.scaleRatio,
+        crushQuality: degradeParams.crushQuality,
+        returnRaw: true
+      });
+
+      const compositedRaw = await sharp(stage1Raw, {
+        raw: { width: targetSize, height: targetSize, channels: 4 }
+      })
+        .composite([{ input: overlayPng, top: 0, left: 0 }])
+        .raw()
+        .toBuffer();
+
+      finalFrameRaw = textDegradeParams.enabled
+        ? await degradeRgbaStickerCrusty(compositedRaw, {
+            isRaw: true,
+            width: targetSize,
+            height: targetSize,
+            scaleRatio: textDegradeParams.scaleRatio,
+            crushQuality: textDegradeParams.crushQuality,
+            returnRaw: true
+          })
+        : compositedRaw;
+    } else {
+      stage1Raw = await sharp(normalizedFrameRaw, {
+        raw: { width: targetSize, height: targetSize, channels: 4 }
+      })
+        .composite([{ input: overlayPng, top: 0, left: 0 }])
+        .raw()
+        .toBuffer();
+
+      finalFrameRaw = await degradeRgbaStickerCrusty(stage1Raw, {
+        isRaw: true,
+        width: targetSize,
+        height: targetSize,
+        scaleRatio: degradeParams.scaleRatio,
+        crushQuality: degradeParams.crushQuality,
+        returnRaw: true
+      });
+    }
+
+    if (returnStages && i === 0) {
+      stage1Frame0Buffer = await sharp(stage1Raw, {
+        raw: { width: targetSize, height: targetSize, channels: 4 }
+      })
+        .png()
+        .toBuffer();
+    }
+
+    processedFrames.push(finalFrameRaw);
+  }
+
+  const passes = [
+    { step: 1, quality: 68 },
+    { step: 1, quality: 42 },
+    { step: 1, quality: 22 },
+    { step: 2, quality: 28 },
+    { step: 2, quality: 14 },
+    { step: 3, quality: 12 }
+  ];
+  const triedKeys = new Set();
+
+  for (const pass of passes) {
+    const { frames: passFrames, delays: passDelays } = subsampleFrames(
+      processedFrames,
+      frameDelays,
+      pass.step
+    );
+    const key = `${passFrames.length}:${pass.quality}`;
+    if (triedKeys.has(key)) continue;
+    triedKeys.add(key);
+
+    const combinedRaw = Buffer.concat(passFrames);
+    const webpRaw = await sharp(combinedRaw, {
+      raw: {
+        width: targetSize,
+        height: targetSize * passFrames.length,
+        channels: 4,
+        pageHeight: targetSize
+      }
+    })
+      .webp({
+        quality: pass.quality,
+        effort: 4,
+        loop: 0,
+        delay: passDelays
+      })
+      .toBuffer();
+
+    const finalWithExif = injectWebpExif(webpRaw, {
+      packName,
+      author,
+      width: targetSize,
+      height: targetSize,
+      hasAlpha: true
+    });
+
+    if (finalWithExif.length <= MAX_ANIMATED_STICKER_BYTES) {
+      if (returnStages) {
+        return {
+          isAnimated: true,
+          blurMode: activeBlurMode,
+          stage1Buffer: stage1Frame0Buffer,
+          composedBuffer: activeBlurMode === 'after' ? stage1Frame0Buffer : null,
+          blurredBaseBuffer: activeBlurMode === 'before' ? stage1Frame0Buffer : null,
+          finalBuffer: finalWithExif,
+          width: targetSize,
+          height: targetSize,
+          pages: passFrames.length,
+          blurSigma: safeSigma,
+          textBlurSigma: activeTextBlurSigma
+        };
+      }
+      return finalWithExif;
+    }
+  }
+
+  throw new MediaValidationError(
+    'ANIMATED_TOO_LARGE',
+    'Maaf, stiker bergerak ini terlalu kompleks sehingga hasil !cap masih melebihi batas 500 Kilobyte WhatsApp. Coba pakai stiker bergerak yang lebih singkat ya.'
+  );
+}
+
+/**
+ * Memotong gambar (JPEG/PNG/WebP/GIF diam) menjadi kotak 1:1 tepat di tengah.
+ * Jika berkas adalah GIF animasi (> 1 bingkai), otomatis diteruskan ke pemotong GIF/video 1:1.
+ */
+async function cropImageToSquare(inputBuffer, { maxSide = 2048 } = {}) {
+  const meta = await validateImageBuffer(inputBuffer);
+  if (meta.format === 'gif' && meta.pages && meta.pages > 1) {
+    return await cropVideoOrGifToSquare(inputBuffer, { asGif: true });
+  }
+
+  const rotated = await sharp(inputBuffer, { limitInputPixels: LIMIT_INPUT_PIXELS })
+    .rotate()
+    .toBuffer({ resolveWithObject: true });
+
+  const side = Math.min(rotated.info.width, rotated.info.height);
+  const left = Math.floor((rotated.info.width - side) / 2);
+  const top = Math.floor((rotated.info.height - side) / 2);
+  const safeMaxSide = Math.max(64, Math.min(4096, Math.round(Number(maxSide)) || 2048));
+  const targetSide = Math.min(side, safeMaxSide);
+  const keepPng = Boolean(meta.hasAlpha && (meta.format === 'png' || meta.format === 'webp'));
+
+  let pipeline = sharp(rotated.data).extract({ left, top, width: side, height: side });
+  if (side > targetSide) {
+    pipeline = pipeline.resize({ width: targetSide, height: targetSide, fit: 'fill' });
+  }
+
+  const outBuffer = keepPng
+    ? await pipeline.png().toBuffer()
+    : await pipeline.jpeg({ quality: 92, mozjpeg: true }).toBuffer();
+
+  return {
+    kind: 'image',
+    buffer: outBuffer,
+    mimeType: keepPng ? 'image/png' : 'image/jpeg',
+    width: targetSide,
+    height: targetSide
+  };
+}
+
+/**
+ * Memotong video (.mp4/.webm/.mov/.avi) atau GIF (WhatsApp GIF maupun berkas .gif)
+ * menjadi kotak 1:1 tepat di tengah menggunakan FFmpeg (dengan fallback Sharp untuk .gif).
+ * Untuk video biasa, trek audio tetap dipertahankan jika ada; untuk GIF, audio dihilangkan
+ * dan dikirim kembali sebagai video MP4 H.264 siap putar (gifPlayback: true).
+ */
+async function cropVideoOrGifToSquare(
+  inputBuffer,
+  { asGif = false, maxSide = 1080, ffmpegPath = FFMPEG_PATH } = {}
+) {
+  if (!Buffer.isBuffer(inputBuffer) || inputBuffer.length === 0) {
+    throw new MediaValidationError('EMPTY_BUFFER', 'Maaf, media gagal diunduh atau berkasnya kosong.');
+  }
+  if (inputBuffer.length > MAX_MEDIA_BYTES) {
+    const maxMb = Math.round((MAX_MEDIA_BYTES / (1024 * 1024)) * 10) / 10;
+    throw new MediaValidationError(
+      'TOO_LARGE',
+      `Maaf, ukuran medianya melebihi batas maksimal ${maxMb} Megabyte. Coba kirim berkas yang lebih kecil ya.`
+    );
+  }
+
+  const detectedKind = detectAnimatedMediaKind(inputBuffer);
+  if (!detectedKind) {
+    throw new MediaValidationError(
+      'NOT_MEDIA',
+      'Maaf, format berkas video atau GIF ini tidak dikenali atau berkasnya rusak.'
+    );
+  }
+
+  const treatAsGif = Boolean(asGif || detectedKind === 'gif');
+  const safeMaxSide = Math.max(64, Math.min(1080, Math.floor((Number(maxSide) || 1080) / 2) * 2));
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'another-me-crop-'));
+  const inputPath = path.join(tmpDir, `input.${detectedKind}`);
+  const outputPath = path.join(tmpDir, 'output.mp4');
+
+  const vf = `crop='trunc(min(iw,ih)/2)*2':'trunc(min(iw,ih)/2)*2',scale='min(iw,${safeMaxSide})':'min(ih,${safeMaxSide})',setsar=1`;
+
+  try {
+    fs.writeFileSync(inputPath, inputBuffer);
+
+    const args = treatAsGif
+      ? [
+          '-y',
+          '-i',
+          inputPath,
+          '-map',
+          '0:v:0',
+          '-an',
+          '-vf',
+          vf,
+          '-c:v',
+          'libx264',
+          '-preset',
+          'veryfast',
+          '-crf',
+          '23',
+          '-pix_fmt',
+          'yuv420p',
+          '-movflags',
+          '+faststart',
+          outputPath
+        ]
+      : [
+          '-y',
+          '-i',
+          inputPath,
+          '-map',
+          '0:v:0',
+          '-map',
+          '0:a?',
+          '-vf',
+          vf,
+          '-c:v',
+          'libx264',
+          '-preset',
+          'veryfast',
+          '-crf',
+          '23',
+          '-pix_fmt',
+          'yuv420p',
+          '-c:a',
+          'aac',
+          '-b:a',
+          '128k',
+          '-movflags',
+          '+faststart',
+          outputPath
+        ];
+
+    await execFileAsync(ffmpegPath, args, {
+      timeout: 45000,
+      maxBuffer: 2 * 1024 * 1024,
+      windowsHide: true
+    });
+
+    const mp4Buffer = fs.readFileSync(outputPath);
+    return {
+      kind: treatAsGif ? 'gif' : 'video',
+      buffer: mp4Buffer,
+      mimeType: 'video/mp4'
+    };
+  } catch (err) {
+    if (err && err.code === 'ENOENT') {
+      if (detectedKind === 'gif') {
+        const gifMeta = await sharp(inputBuffer, { limitInputPixels: LIMIT_INPUT_PIXELS }).metadata();
+        const side = Math.min(
+          gifMeta.width || 512,
+          gifMeta.pageHeight || gifMeta.height || 512,
+          safeMaxSide
+        );
+        const croppedGif = await sharp(inputBuffer, {
+          animated: true,
+          limitInputPixels: LIMIT_INPUT_PIXELS
+        })
+          .resize({ width: side, height: side, fit: 'cover', position: 'centre' })
+          .gif()
+          .toBuffer();
+        return {
+          kind: 'gif_document',
+          buffer: croppedGif,
+          mimeType: 'image/gif',
+          width: side,
+          height: side
+        };
+      }
+      throw new MediaValidationError(
+        'FFMPEG_MISSING',
+        'Maaf, pemotongan video 1:1 memerlukan FFmpeg yang terpasang di sistem.'
+      );
+    }
+    if (err instanceof MediaValidationError) throw err;
+    throw new Error(`FFmpeg gagal memotong media 1:1: ${err.message}`);
+  } finally {
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    } catch {}
+  }
+}
+
 module.exports = {
   MAX_MEDIA_BYTES,
   MAX_ANIMATED_STICKER_BYTES,
   MAX_VIDEO_INPUT_SECONDS,
+  MAX_CROP_VIDEO_SECONDS,
   DEFAULT_VIDEO_STICKER_SECONDS,
   LIMIT_INPUT_PIXELS,
   DEFAULT_PACK_NAME,
   DEFAULT_PACK_AUTHOR,
   DEFAULT_TEXT_BLUR_SIGMA,
   DEFAULT_CAP_BLUR_SIGMA,
+  DEFAULT_CAP_BLUR_MODE,
+  DEFAULT_CAP_TEXT_BLUR_SIGMA,
+  DEFAULT_CAP_MAX_DIM,
+  VALID_CAP_BLUR_MODES,
+  resolveCapBlurMode,
+  resolveCapBlurSigma,
+  resolveCapTextBlurSigma,
+  resolveCapMaxDim,
+  computeCapDegradeParams,
+  computeCapTextDegradeParams,
   MediaValidationError,
   escapeXml,
   wrapTextLines,
   layoutImpactBlock,
+  subsampleFrames,
   detectAnimatedMediaKind,
   validateImageBuffer,
   convertImageToSticker,
@@ -952,5 +2074,8 @@ module.exports = {
   convertStickerToMedia,
   rewriteStickerExif,
   renderTextBlurImage,
-  renderCapMeme
+  renderCapMeme,
+  renderCapSticker,
+  cropImageToSquare,
+  cropVideoOrGifToSquare
 };

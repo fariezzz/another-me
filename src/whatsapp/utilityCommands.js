@@ -4,7 +4,7 @@
  * maupun lawan bicara di chat pribadi & grup (dilindungi CommandAntiSpamGuard).
  * Seluruh perintah mendukung awalan '!' maupun '.' beserta alias cadangan:
  * - Bantuan & sistem: !menu, !ping
- * - Media & stiker:   !sticker, !toimg, !wm
+ * - Media & stiker:   !sticker, !toimg, !wm, !crop
  * - Meme kustom:      !text, !stext, !cap
  * - Utilitas harian:  !cuaca, !jam, !pilih
  *
@@ -15,6 +15,7 @@ const { normalizeMessageContent } = require('@whiskeysockets/baileys');
 const {
   MAX_MEDIA_BYTES,
   MAX_VIDEO_INPUT_SECONDS,
+  MAX_CROP_VIDEO_SECONDS,
   DEFAULT_PACK_NAME,
   DEFAULT_PACK_AUTHOR,
   MediaValidationError,
@@ -23,7 +24,10 @@ const {
   convertStickerToMedia,
   rewriteStickerExif,
   renderTextBlurImage,
-  renderCapMeme
+  renderCapMeme,
+  renderCapSticker,
+  cropImageToSquare,
+  cropVideoOrGifToSquare
 } = require('../media/imageProcessor');
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -41,6 +45,7 @@ const COMMAND_ALIAS_GROUPS = {
   sticker: ['sticker', 'stiker', 's', 'stk'],
   toimg: ['toimg', 'toimage', 'togif', 'img', 'gambar', 'foto'],
   wm: ['wm', 'steal', 'watermark', 'take'],
+  crop: ['crop', 'potong', 'square', 'kotak'],
   text: ['text', 'teks', 'txt'],
   stext: ['stext', 'steks', 'stxt', 'brat', 'sbrat', 'st'],
   cap: ['cap', 'caption', 'burem', 'blurcap'],
@@ -56,7 +61,7 @@ for (const [canonical, aliases] of Object.entries(COMMAND_ALIAS_GROUPS)) {
   }
 }
 
-const MEDIA_COMMANDS = new Set(['sticker', 'toimg', 'wm', 'text', 'stext', 'cap']);
+const MEDIA_COMMANDS = new Set(['sticker', 'toimg', 'wm', 'crop', 'text', 'stext', 'cap']);
 
 /**
  * Membuka seluruh lapisan pembungkus pesan WhatsApp Baileys v7 secara rekursif,
@@ -359,11 +364,12 @@ function buildMenuText({ showOwnerCommands = false, isOwner = false } = {}) {
     '- `!sticker` (`stiker`, `s`, `stk`) — ubah foto, GIF, atau video pendek (<= 15 detik) jadi stiker statis/bergerak (tambah `crop` untuk potong penuh 1:1)',
     '- `!toimg` (`toimage`, `togif`, `img`, `gambar`, `foto`) — ubah stiker (balas stiker) jadi gambar, atau GIF bila stiker bergerak',
     '- `!wm <paket> | <pembuat>` (`steal`, `watermark`, `take`) — ganti nama paket & pembuat pada stiker yang dibalas',
+    '- `!crop` (`potong`, `square`, `kotak`) — potong foto, video, atau GIF menjadi kotak 1:1 tepat di tengah',
     '',
     '*Meme & Teks:*',
     '- `!text <teks>` (`teks`, `txt`) — gambar latar putih teks hitam blur tipis',
     '- `!stext <teks>` (`steks`, `stxt`, `brat`, `sbrat`, `st`) — sama seperti `!text`, langsung jadi stiker',
-    '- `!cap <atas> | <bawah>` (`caption`, `burem`, `blurcap`) — foto dengan teks Impact kapital lalu seluruh gambar di-blur ringan (1 teks otomatis di bawah)',
+    '- `!cap <atas> | <bawah>` (`caption`, `burem`, `blurcap`) — beri teks Impact kapital besar + emoji berwarna bergaya meme burik pada foto atau stiker diam/bergerak (1 teks otomatis di bawah)',
     '',
     '*Utilitas Harian:*',
     '- `!cuaca [kota]` (`weather`, `suhu`) — cek cuaca terkini (bawaan: Tasikmalaya)',
@@ -672,6 +678,81 @@ async function handleUtilityCommands({
         return true;
       }
 
+      case 'crop': {
+        const candidate = extractMediaCandidate(msg, normalizedMessage, mediaLookupOpts);
+        if (!candidate) {
+          await replyFn({
+            text: 'Kirim foto, video, atau GIF dengan caption `!crop` (atau `.crop`), atau balas media tersebut untuk memotongnya menjadi kotak 1:1 ya.'
+          });
+          return true;
+        }
+        if (candidate.kind === 'view_once') {
+          await replyFn({
+            text: 'Maaf, foto atau video sekali lihat (View Once) tidak bisa diolah dengan perintah ini untuk menghormati privasi pengirimnya.'
+          });
+          return true;
+        }
+        if (candidate.kind === 'sticker') {
+          await replyFn({
+            text: 'Stiker WhatsApp umumnya sudah berbentuk kotak 1:1 ya. Kalau mau ubah stiker jadi gambar atau GIF dulu pakai `!toimg`, lalu jalankan `!crop` pada foto, video, atau GIF.'
+          });
+          return true;
+        }
+        if (candidate.kind !== 'image' && candidate.kind !== 'video') {
+          await replyFn({
+            text: 'Maaf, perintah `!crop` hanya menerima gambar, video, atau GIF (bukan audio atau dokumen lain). Coba kirim foto, video, atau GIF ya.'
+          });
+          return true;
+        }
+        if (candidate.kind === 'video' && candidate.seconds > MAX_CROP_VIDEO_SECONDS) {
+          await replyFn({
+            text: `Maaf, durasi videonya terlalu panjang (${candidate.seconds} detik, maksimal ${MAX_CROP_VIDEO_SECONDS} detik) untuk dipotong 1:1. Potong dulu videonya lebih singkat ya.`
+          });
+          return true;
+        }
+
+        const result = await runMediaJob(async () => {
+          const mediaBuffer = await downloadValidatedMediaBuffer(candidate, downloadMediaBuffer);
+          if (candidate.kind === 'video') {
+            return await cropVideoOrGifToSquare(mediaBuffer, {
+              asGif: Boolean(candidate.gifPlayback)
+            });
+          }
+          return await cropImageToSquare(mediaBuffer);
+        });
+
+        let payload;
+        let outputLabel;
+        if (result.kind === 'gif') {
+          payload = {
+            video: result.buffer,
+            gifPlayback: true,
+            mimetype: 'video/mp4'
+          };
+          outputLabel = 'GIF 1:1';
+        } else if (result.kind === 'gif_document') {
+          payload = {
+            document: result.buffer,
+            mimetype: 'image/gif',
+            fileName: 'cropped.gif'
+          };
+          outputLabel = 'berkas GIF 1:1';
+        } else if (result.kind === 'video') {
+          payload = {
+            video: result.buffer,
+            mimetype: 'video/mp4'
+          };
+          outputLabel = 'video 1:1';
+        } else {
+          payload = { image: result.buffer };
+          outputLabel = 'gambar 1:1';
+        }
+
+        await replyFn(payload);
+        addLog('info', `Perintah ${parsed.trigger} berhasil memotong ${outputLabel} untuk ${actorLabel}.`);
+        return true;
+      }
+
       case 'text': {
         if (!parsed.args) {
           await replyFn({
@@ -710,7 +791,7 @@ async function handleUtilityCommands({
         const { topText, bottomText } = parseCapArgs(parsed.args);
         if (!topText && !bottomText) {
           await replyFn({
-            text: 'Pakai: kirim foto dengan caption `!cap <teks atas> | <teks bawah>` (atau `.cap`) atau balas foto dengan perintah tersebut. Kalau cuma 1 teks, otomatis ditaruh di bawah ya.'
+            text: 'Pakai: kirim foto dengan caption `!cap <teks atas> | <teks bawah>` (atau `.cap`), atau balas foto maupun stiker dengan perintah tersebut. Kalau cuma 1 teks, otomatis ditaruh di bawah ya.'
           });
           return true;
         }
@@ -718,7 +799,7 @@ async function handleUtilityCommands({
         const candidate = extractMediaCandidate(msg, normalizedMessage, mediaLookupOpts);
         if (!candidate) {
           await replyFn({
-            text: 'Fotonya belum ada. Kirim foto dengan caption `!cap <teks atas> | <teks bawah>` atau balas sebuah foto ya.'
+            text: 'Foto atau stikernya belum ada. Kirim foto dengan caption `!cap <teks atas> | <teks bawah>` atau balas sebuah foto maupun stiker ya.'
           });
           return true;
         }
@@ -729,14 +810,18 @@ async function handleUtilityCommands({
           return true;
         }
         if (candidate.kind === 'sticker') {
-          await replyFn({
-            text: 'Maaf, perintah `!cap` hanya menerima foto biasa (bukan stiker). Ubah stikernya jadi gambar dulu pakai `!toimg`, lalu jalankan `!cap` ya.'
+          const stickerBuffer = await runMediaJob(async () => {
+            const webpBuffer = await downloadValidatedMediaBuffer(candidate, downloadMediaBuffer);
+            return await renderCapSticker(webpBuffer, { topText, bottomText });
           });
+
+          await replyFn({ sticker: stickerBuffer });
+          addLog('info', `Perintah ${parsed.trigger} pada stiker selesai dibuat untuk ${actorLabel}.`);
           return true;
         }
         if (candidate.kind !== 'image') {
           await replyFn({
-            text: 'Maaf, perintah `!cap` hanya menerima berkas gambar atau foto (bukan video, audio, atau dokumen non-gambar). Coba kirim foto ya.'
+            text: 'Maaf, perintah `!cap` hanya menerima berkas gambar, foto, atau stiker (bukan video, audio, atau dokumen non-gambar). Coba kirim foto atau balas stiker ya.'
           });
           return true;
         }

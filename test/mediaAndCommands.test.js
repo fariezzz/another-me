@@ -5,9 +5,21 @@ const sharp = require('sharp');
 const { isValidWebpBuffer } = require('../src/utils/atomicFile');
 const { injectWebpExif, readWebpExifMetadata } = require('../src/utils/webpExif');
 const {
+  isEmojiGrapheme,
+  emojiToTwemojiCandidates,
+  splitLineIntoRuns,
+  fetchEmojiSvgBuffer,
+  clearEmojiMemoryCache
+} = require('../src/utils/emojiRenderer');
+const {
   MAX_MEDIA_BYTES,
   MAX_ANIMATED_STICKER_BYTES,
   MediaValidationError,
+  resolveCapBlurMode,
+  resolveCapTextBlurSigma,
+  resolveCapMaxDim,
+  computeCapDegradeParams,
+  subsampleFrames,
   validateImageBuffer,
   convertImageToSticker,
   convertVideoOrGifToSticker,
@@ -15,10 +27,15 @@ const {
   rewriteStickerExif,
   renderTextBlurImage,
   renderCapMeme,
+  renderCapSticker,
+  cropImageToSquare,
+  cropVideoOrGifToSquare,
   layoutImpactBlock
 } = require('../src/media/imageProcessor');
 const { CommandAntiSpamGuard } = require('../src/whatsapp/commandAntiSpam');
 const {
+  COMMAND_ALIAS_GROUPS,
+  COMMAND_ALIASES,
   parseUtilityCommand,
   parseCapArgs,
   parseWatermarkArgs,
@@ -33,7 +50,10 @@ const BaileysService = require('../src/whatsapp/baileysService');
  * untuk membuktikan secara matematis bahwa tahap blur akhir melembutkan piksel foto & teks.
  */
 async function measureMaxHorizontalEdgeStep(imageBuffer, yFraction) {
-  const { data, info } = await sharp(imageBuffer).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const { data, info } = await sharp(imageBuffer)
+    .flatten({ background: '#808080' })
+    .raw()
+    .toBuffer({ resolveWithObject: true });
   const y = Math.max(0, Math.min(info.height - 1, Math.floor(info.height * yFraction)));
   let maxDelta = 0;
   for (let x = 1; x < info.width; x++) {
@@ -63,7 +83,15 @@ test('parseUtilityCommand and parseCapArgs handle ! and . prefixes, backup alias
   assert.equal(parseUtilityCommand('.s crop').trigger, '.s');
   assert.equal(parseUtilityCommand('.gambar').command, 'toimg');
   assert.equal(parseUtilityCommand('.steal Paket | Fariez').command, 'wm');
+  assert.equal(parseUtilityCommand('!crop').command, 'crop');
+  assert.equal(parseUtilityCommand('.potong').command, 'crop');
+  assert.equal(parseUtilityCommand('!square').command, 'crop');
+  assert.equal(parseUtilityCommand('.kotak').command, 'crop');
   assert.equal(parseUtilityCommand('!teks halo').command, 'text');
+
+  // Pastikan seluruh alias di COMMAND_ALIAS_GROUPS unik tanpa tabrakan antar perintah
+  const totalDeclaredAliases = Object.values(COMMAND_ALIAS_GROUPS).reduce((sum, arr) => sum + arr.length, 0);
+  assert.equal(COMMAND_ALIASES.size, totalDeclaredAliases, 'Tidak boleh ada alias yang bertabrakan antar perintah');
   assert.equal(parseUtilityCommand('.txt halo').command, 'text');
   assert.equal(parseUtilityCommand('!stext pro banget').command, 'stext');
   assert.equal(parseUtilityCommand('.brat halo').command, 'stext');
@@ -174,14 +202,16 @@ test('!cap inserts Impact text FIRST then blurs the ENTIRE combined image (photo
   const stages = await renderCapMeme(sharpTestPhoto, {
     topText: 'Satu',
     bottomText: 'SIRKEL',
+    blurMode: 'after',
     blurSigma: 3.0,
+    maxDim: 512,
     returnStages: true
   });
 
   const finalMeta = await sharp(stages.finalBuffer).metadata();
   assert.equal(finalMeta.format, 'jpeg');
-  assert.equal(finalMeta.width, 640);
-  assert.equal(finalMeta.height, 640);
+  assert.equal(finalMeta.width, 512);
+  assert.equal(finalMeta.height, 512);
 
   // 1. Pada area tengah foto (y = 50%, bebas teks), tahap 1 masih sangat tajam, tahap 2 melembut signifikan
   const midEdgeStage1 = await measureMaxHorizontalEdgeStep(stages.composedBuffer, 0.5);
@@ -1007,5 +1037,723 @@ test('stealth !ping/!menu for non-owner, owner fromMe !acep/!ask, quoted fromMe 
     assert.equal(fs.readdirSync(askDir).filter((f) => f.endsWith('.json')).length, 1);
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('!cap supports CAP_BLUR_MODE (after vs before), separate CAP_TEXT_BLUR_SIGMA, CAP_MAX_DIM downscaling, and static & animated WebP stickers', async () => {
+  const prevEnvMode = process.env.CAP_BLUR_MODE;
+  const prevEnvTextBlur = process.env.CAP_TEXT_BLUR_SIGMA;
+  const prevEnvMaxDim = process.env.CAP_MAX_DIM;
+  try {
+    // 1. Resolusi CAP_BLUR_MODE, CAP_TEXT_BLUR_SIGMA, & CAP_MAX_DIM dari variabel environment
+    delete process.env.CAP_BLUR_MODE;
+    delete process.env.CAP_TEXT_BLUR_SIGMA;
+    delete process.env.CAP_MAX_DIM;
+    assert.equal(resolveCapBlurMode(), 'after');
+    assert.equal(resolveCapTextBlurSigma(), 1.0);
+    assert.equal(resolveCapMaxDim(), 640);
+    const defaultDeg = computeCapDegradeParams(2.8);
+    const heavyDeg = computeCapDegradeParams(6.0);
+    assert.ok(heavyDeg.scaleRatio < defaultDeg.scaleRatio, 'Intensitas burik lebih tinggi harus memperkecil scaleRatio');
+    assert.ok(heavyDeg.crushQuality < defaultDeg.crushQuality, 'Intensitas burik lebih tinggi harus menurunkan kualitas JPEG');
+    process.env.CAP_BLUR_MODE = 'before';
+    assert.equal(resolveCapBlurMode(), 'before');
+    process.env.CAP_BLUR_MODE = '  AFTER ';
+    assert.equal(resolveCapBlurMode(), 'after');
+    process.env.CAP_BLUR_MODE = 'mode-tidak-dikenal';
+    assert.equal(resolveCapBlurMode(), 'after');
+
+    process.env.CAP_TEXT_BLUR_SIGMA = '0';
+    assert.equal(resolveCapTextBlurSigma(), 0);
+    process.env.CAP_TEXT_BLUR_SIGMA = '0.2';
+    assert.equal(resolveCapTextBlurSigma(), 0);
+    process.env.CAP_TEXT_BLUR_SIGMA = '1.4';
+    assert.equal(resolveCapTextBlurSigma(), 1.4);
+    process.env.CAP_TEXT_BLUR_SIGMA = '9.5';
+    assert.equal(resolveCapTextBlurSigma(), 4.0);
+    delete process.env.CAP_TEXT_BLUR_SIGMA;
+
+    process.env.CAP_MAX_DIM = '420';
+    assert.equal(resolveCapMaxDim(), 420);
+    process.env.CAP_MAX_DIM = '100';
+    assert.equal(resolveCapMaxDim(), 240);
+    process.env.CAP_MAX_DIM = '4000';
+    assert.equal(resolveCapMaxDim(), 1080);
+    delete process.env.CAP_MAX_DIM;
+
+    // 1b. Foto jernih beresolusi tinggi 1200x900 otomatis dinormalkan ke 640x480 (atau 420x315 saat CAP_MAX_DIM=420)
+    const hdPhoto = await sharp({
+      create: { width: 1200, height: 900, channels: 3, background: { r: 90, g: 120, b: 150 } }
+    })
+      .jpeg({ quality: 92 })
+      .toBuffer();
+    const hdDefaultOut = await renderCapMeme(hdPhoto, { bottomText: 'BUREM', blurMode: 'before', blurSigma: 2.8 });
+    const hdDefaultMeta = await sharp(hdDefaultOut).metadata();
+    assert.equal(hdDefaultMeta.width, 640);
+    assert.equal(hdDefaultMeta.height, 480);
+
+    process.env.CAP_MAX_DIM = '420';
+    const hdLowerOut = await renderCapMeme(hdPhoto, { bottomText: 'BUREM', blurMode: 'before', blurSigma: 2.8 });
+    const hdLowerMeta = await sharp(hdLowerOut).metadata();
+    assert.equal(hdLowerMeta.width, 420);
+    assert.equal(hdLowerMeta.height, 315);
+    delete process.env.CAP_MAX_DIM;
+
+    // Argumen !cap tidak punya flag mode baru: "before halo" tetap diperlakukan sebagai teks caption murni
+    assert.deepEqual(parseCapArgs('before halo'), { topText: '', bottomText: 'before halo' });
+
+    // 2. Uji foto: mode before teks tajam (0), mode before teks buram tipis (1.0 bawaan), vs mode after (3.0)
+    const width = 640;
+    const height = 640;
+    const rawPhoto = Buffer.alloc(width * height * 3);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const idx = (y * width + x) * 3;
+        const val = x < width / 2 ? 15 : 240;
+        rawPhoto[idx] = val;
+        rawPhoto[idx + 1] = val;
+        rawPhoto[idx + 2] = val;
+      }
+    }
+    const sharpPhoto = await sharp(rawPhoto, { raw: { width, height, channels: 3 } }).png().toBuffer();
+
+    process.env.CAP_BLUR_MODE = 'before';
+    process.env.CAP_TEXT_BLUR_SIGMA = '0';
+    const beforePhotoSharp = await renderCapMeme(sharpPhoto, {
+      topText: 'Satu',
+      bottomText: 'SIRKEL',
+      blurSigma: 3.0,
+      returnStages: true
+    });
+    assert.equal(beforePhotoSharp.blurMode, 'before');
+    assert.equal(beforePhotoSharp.textBlurSigma, 0);
+    assert.ok(Buffer.isBuffer(beforePhotoSharp.blurredBaseBuffer));
+
+    delete process.env.CAP_TEXT_BLUR_SIGMA; // kembali ke bawaan 1.0
+    const beforePhotoSoft = await renderCapMeme(sharpPhoto, {
+      topText: 'Satu',
+      bottomText: 'SIRKEL',
+      blurSigma: 3.0,
+      returnStages: true
+    });
+    assert.equal(beforePhotoSoft.blurMode, 'before');
+    assert.equal(beforePhotoSoft.textBlurSigma, 1.0);
+
+    process.env.CAP_BLUR_MODE = 'after';
+    process.env.CAP_TEXT_BLUR_SIGMA = '1.5'; // harus diabaikan saat mode after
+    const afterPhoto = await renderCapMeme(sharpPhoto, {
+      topText: 'Satu',
+      bottomText: 'SIRKEL',
+      blurSigma: 3.0,
+      returnStages: true
+    });
+    assert.equal(afterPhoto.blurMode, 'after');
+    assert.equal(afterPhoto.textBlurSigma, 0);
+    delete process.env.CAP_TEXT_BLUR_SIGMA;
+
+    // Verifikasi urutan matematis ketajaman teks: before(0) > before(1.0) > after(3.0)
+    const beforePhotoMidEdge = await measureMaxHorizontalEdgeStep(beforePhotoSoft.finalBuffer, 0.5);
+    const beforeSharpTextEdge = await measureMaxHorizontalEdgeStep(beforePhotoSharp.finalBuffer, 0.9);
+    const beforeSoftTextEdge = await measureMaxHorizontalEdgeStep(beforePhotoSoft.finalBuffer, 0.9);
+    const afterPhotoTextEdge = await measureMaxHorizontalEdgeStep(afterPhoto.finalBuffer, 0.9);
+    assert.ok(beforePhotoMidEdge < 100, `Latar foto pada mode before harus blur (got ${beforePhotoMidEdge})`);
+    assert.ok(beforeSharpTextEdge > 170, `Teks pada mode before dengan sigma teks 0 harus tajam (got ${beforeSharpTextEdge})`);
+    assert.ok(
+      beforeSoftTextEdge < beforeSharpTextEdge * 0.78,
+      `Teks pada mode before dengan sigma 1.0 harus lebih lembut dibanding sigma 0 (${beforeSoftTextEdge} vs ${beforeSharpTextEdge})`
+    );
+    assert.ok(
+      beforeSoftTextEdge > afterPhotoTextEdge * 1.4,
+      `Teks pada mode before dengan sigma 1.0 harus tetap lebih tajam dibanding mode after (${beforeSoftTextEdge} vs ${afterPhotoTextEdge})`
+    );
+
+    // 3. Stiker diam WebP berlatar transparan -> tetap jadi stiker WebP 512x512 + EXIF + alpha terjaga
+    const stkSize = 512;
+    const staticRaw = Buffer.alloc(stkSize * stkSize * 4);
+    for (let y = 60; y < 452; y++) {
+      for (let x = 60; x < 452; x++) {
+        const o = (y * stkSize + x) * 4;
+        const val = x < stkSize / 2 ? 20 : 235;
+        staticRaw[o] = val;
+        staticRaw[o + 1] = val;
+        staticRaw[o + 2] = val;
+        staticRaw[o + 3] = 255;
+      }
+    }
+    const staticStickerIn = await sharp(staticRaw, { raw: { width: stkSize, height: stkSize, channels: 4 } })
+      .webp({ quality: 85 })
+      .toBuffer();
+
+    process.env.CAP_BLUR_MODE = 'before';
+    process.env.CAP_TEXT_BLUR_SIGMA = '0';
+    const staticCapBeforeSharp = await renderCapSticker(staticStickerIn, {
+      topText: 'STIKER',
+      bottomText: 'SIRKEL',
+      blurSigma: 3.0,
+      packName: 'CapPack',
+      author: 'Fariez',
+      returnStages: true
+    });
+    delete process.env.CAP_TEXT_BLUR_SIGMA;
+    const staticCapBeforeSoft = await renderCapSticker(staticStickerIn, {
+      topText: 'STIKER',
+      bottomText: 'SIRKEL',
+      blurSigma: 3.0,
+      packName: 'CapPack',
+      author: 'Fariez',
+      returnStages: true
+    });
+    assert.equal(staticCapBeforeSoft.isAnimated, false);
+    assert.equal(staticCapBeforeSoft.blurMode, 'before');
+    assert.equal(staticCapBeforeSoft.textBlurSigma, 1.0);
+    assert.equal(isValidWebpBuffer(staticCapBeforeSoft.finalBuffer), true);
+    const staticBeforeMeta = await sharp(staticCapBeforeSoft.finalBuffer).metadata();
+    assert.equal(staticBeforeMeta.width, 512);
+    assert.equal(staticBeforeMeta.height, 512);
+    assert.equal(staticBeforeMeta.hasAlpha, true);
+    assert.equal(readWebpExifMetadata(staticCapBeforeSoft.finalBuffer)['sticker-pack-name'], 'CapPack');
+
+    process.env.CAP_BLUR_MODE = 'after';
+    const staticCapAfter = await renderCapSticker(staticStickerIn, {
+      topText: 'STIKER',
+      bottomText: 'SIRKEL',
+      blurSigma: 3.0,
+      packName: 'CapPack',
+      author: 'Fariez',
+      returnStages: true
+    });
+    assert.equal(staticCapAfter.blurMode, 'after');
+    assert.equal(staticCapAfter.textBlurSigma, 0);
+
+    const stkBeforeSharpEdge = await measureMaxHorizontalEdgeStep(staticCapBeforeSharp.finalBuffer, 0.9);
+    const stkBeforeSoftEdge = await measureMaxHorizontalEdgeStep(staticCapBeforeSoft.finalBuffer, 0.9);
+    const stkAfterTextEdge = await measureMaxHorizontalEdgeStep(staticCapAfter.finalBuffer, 0.9);
+    assert.ok(stkBeforeSharpEdge > 170, `Teks stiker mode before sigma 0 harus tajam (got ${stkBeforeSharpEdge})`);
+    assert.ok(
+      stkBeforeSoftEdge < stkBeforeSharpEdge * 0.78,
+      `Teks stiker mode before sigma 1.0 harus agak blur (${stkBeforeSoftEdge} vs ${stkBeforeSharpEdge})`
+    );
+    assert.ok(
+      stkBeforeSoftEdge > stkAfterTextEdge * 1.4,
+      `Teks stiker mode before sigma 1.0 harus lebih tajam dari mode after (${stkBeforeSoftEdge} vs ${stkAfterTextEdge})`
+    );
+
+    // 4. Stiker bergerak WebP -> tetap jadi stiker bergerak 512x512 <= 500 KB + EXIF + delay terjaga
+    const frames = 6;
+    const animRaw = Buffer.alloc(stkSize * stkSize * frames * 4);
+    for (let f = 0; f < frames; f++) {
+      const shiftX = f * 18;
+      for (let y = 110; y < 370; y++) {
+        for (let x = 90 + shiftX; x < 290 + shiftX; x++) {
+          const o = (f * stkSize * stkSize + y * stkSize + x) * 4;
+          const val = x < 190 + shiftX ? 25 : 235;
+          animRaw[o] = val;
+          animRaw[o + 1] = val;
+          animRaw[o + 2] = 180;
+          animRaw[o + 3] = 255;
+        }
+      }
+    }
+    const animDelays = [80, 80, 90, 90, 100, 100];
+    const animStickerIn = await sharp(animRaw, {
+      raw: { width: stkSize, height: stkSize * frames, channels: 4, pageHeight: stkSize }
+    })
+      .webp({ quality: 80, loop: 0, delay: animDelays })
+      .toBuffer();
+
+    process.env.CAP_BLUR_MODE = 'before';
+    const animCapBefore = await renderCapSticker(animStickerIn, {
+      bottomText: 'GERAK',
+      blurSigma: 3.0,
+      packName: 'AnimCap',
+      author: 'Fariez'
+    });
+    assert.equal(isValidWebpBuffer(animCapBefore), true);
+    assert.ok(animCapBefore.length <= MAX_ANIMATED_STICKER_BYTES, `Stiker !cap bergerak harus <= 500KB (got ${animCapBefore.length})`);
+    const animBeforeMeta = await sharp(animCapBefore, { animated: true }).metadata();
+    assert.equal(animBeforeMeta.width, 512);
+    assert.equal(animBeforeMeta.pageHeight || animBeforeMeta.height, 512);
+    assert.equal(animBeforeMeta.pages, frames);
+    assert.deepEqual(animBeforeMeta.delay, animDelays);
+    assert.equal(animBeforeMeta.hasAlpha, true);
+    assert.equal(readWebpExifMetadata(animCapBefore)['sticker-pack-name'], 'AnimCap');
+
+    process.env.CAP_BLUR_MODE = 'after';
+    const animCapAfter = await renderCapSticker(animStickerIn, {
+      bottomText: 'GERAK',
+      blurSigma: 3.0,
+      packName: 'AnimCap',
+      author: 'Fariez'
+    });
+    assert.equal(isValidWebpBuffer(animCapAfter), true);
+    assert.ok(animCapAfter.length <= MAX_ANIMATED_STICKER_BYTES);
+    const animAfterMeta = await sharp(animCapAfter, { animated: true }).metadata();
+    assert.equal(animAfterMeta.pages, frames);
+
+    // Bandingkan ketajaman teks pada bingkai 0 antara mode before (blur teks tipis 1.0) dan after (3.0)
+    const frame0BeforePng = await sharp(animCapBefore, { page: 0 }).png().toBuffer();
+    const frame0AfterPng = await sharp(animCapAfter, { page: 0 }).png().toBuffer();
+    const animBeforeTextEdge = await measureMaxHorizontalEdgeStep(frame0BeforePng, 0.9);
+    const animAfterTextEdge = await measureMaxHorizontalEdgeStep(frame0AfterPng, 0.9);
+    assert.ok(
+      animBeforeTextEdge > animAfterTextEdge * 1.4,
+      `Bingkai 0 stiker bergerak mode before (teks blur tipis) harus lebih tajam dari mode after (${animBeforeTextEdge} vs ${animAfterTextEdge})`
+    );
+
+    // Uji helper subsampleFrames mempertahankan total durasi & minimal 2 bingkai
+    const sub = subsampleFrames(['f0', 'f1', 'f2', 'f3', 'f4'], [60, 60, 60, 60, 60], 2);
+    assert.equal(sub.frames.length, 3);
+    assert.deepEqual(sub.delays, [120, 120, 60]);
+    const subSmall = subsampleFrames(['f0', 'f1', 'f2'], [100, 100, 100], 3);
+    assert.equal(subSmall.frames.length, 2);
+    assert.deepEqual(subSmall.delays, [200, 100]);
+
+    // 5. Uji end-to-end handleUtilityCommands: balas stiker diam & stiker bergerak dengan !cap / .burem
+    const sent = [];
+    const mockSocket = {
+      sendMessage: async (jid, content) => {
+        sent.push({ jid, content });
+        return { key: { id: `cap-stk-${sent.length}` } };
+      }
+    };
+
+    await handleUtilityCommands({
+      waSocket: mockSocket,
+      downloadMediaBuffer: async () => staticStickerIn,
+      remoteJid: '628111@s.whatsapp.net',
+      senderKey: 'owner',
+      fromMe: true,
+      profile: { isKnown: true, name: 'Pemilik' },
+      messageText: '!cap Satu | SIRKEL',
+      msg: {
+        key: { remoteJid: '628111@s.whatsapp.net', id: 'cap-static-cmd', fromMe: true },
+        message: {
+          extendedTextMessage: {
+            text: '!cap Satu | SIRKEL',
+            contextInfo: {
+              stanzaId: 'orig-static-stk',
+              quotedMessage: { stickerMessage: { mimetype: 'image/webp', fileLength: staticStickerIn.length } }
+            }
+          }
+        }
+      },
+      addLog: () => {}
+    });
+    assert.ok(Buffer.isBuffer(sent[0].content.sticker), 'Balasan !cap pada stiker diam harus berupa stiker');
+    assert.equal(isValidWebpBuffer(sent[0].content.sticker), true);
+
+    await handleUtilityCommands({
+      waSocket: mockSocket,
+      downloadMediaBuffer: async () => animStickerIn,
+      remoteJid: '628111@s.whatsapp.net',
+      senderKey: 'owner',
+      fromMe: true,
+      profile: { isKnown: true, name: 'Pemilik' },
+      messageText: '.burem GAS',
+      msg: {
+        key: { remoteJid: '628111@s.whatsapp.net', id: 'cap-anim-cmd', fromMe: true },
+        message: {
+          extendedTextMessage: {
+            text: '.burem GAS',
+            contextInfo: {
+              stanzaId: 'orig-anim-stk',
+              quotedMessage: {
+                stickerMessage: { mimetype: 'image/webp', fileLength: animStickerIn.length, isAnimated: true }
+              }
+            }
+          }
+        }
+      },
+      addLog: () => {}
+    });
+    assert.ok(Buffer.isBuffer(sent[1].content.sticker), 'Balasan .burem pada stiker bergerak harus berupa stiker');
+    const sentAnimMeta = await sharp(sent[1].content.sticker, { animated: true }).metadata();
+    assert.ok(sentAnimMeta.pages > 1, 'Stiker bergerak hasil !cap harus tetap bergerak');
+  } finally {
+    if (prevEnvMode === undefined) {
+      delete process.env.CAP_BLUR_MODE;
+    } else {
+      process.env.CAP_BLUR_MODE = prevEnvMode;
+    }
+    if (prevEnvTextBlur === undefined) {
+      delete process.env.CAP_TEXT_BLUR_SIGMA;
+    } else {
+      process.env.CAP_TEXT_BLUR_SIGMA = prevEnvTextBlur;
+    }
+    if (prevEnvMaxDim === undefined) {
+      delete process.env.CAP_MAX_DIM;
+    } else {
+      process.env.CAP_MAX_DIM = prevEnvMaxDim;
+    }
+  }
+});
+
+test('!crop crops images, videos (preserving audio), and GIFs to 1:1 square and guards invalid inputs', async () => {
+  const { execFileSync } = require('child_process');
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'another-me-crop-test-'));
+  try {
+    // 1. Gambar lanskap 600x300 (kiri/kanan merah, tengah 300x300 hijau) -> kotak 300x300 hijau murni
+    const imgW = 600;
+    const imgH = 300;
+    const rawImg = Buffer.alloc(imgW * imgH * 3);
+    for (let y = 0; y < imgH; y++) {
+      for (let x = 0; x < imgW; x++) {
+        const idx = (y * imgW + x) * 3;
+        const inCenter = x >= 150 && x < 450;
+        rawImg[idx] = inCenter ? 20 : 230;
+        rawImg[idx + 1] = inCenter ? 210 : 20;
+        rawImg[idx + 2] = 30;
+      }
+    }
+    const landscapeJpg = await sharp(rawImg, { raw: { width: imgW, height: imgH, channels: 3 } })
+      .jpeg({ quality: 95 })
+      .toBuffer();
+
+    const croppedImg = await cropImageToSquare(landscapeJpg);
+    assert.equal(croppedImg.kind, 'image');
+    assert.equal(croppedImg.mimeType, 'image/jpeg');
+    const croppedImgMeta = await sharp(croppedImg.buffer).metadata();
+    assert.equal(croppedImgMeta.width, 300);
+    assert.equal(croppedImgMeta.height, 300);
+    // Piksel di dekat tepi dalam (10,10) dan (289,289) hasil crop harus hijau murni (bukan merah sisi luar)
+    const { data: croppedPx, info: croppedInfo } = await sharp(croppedImg.buffer)
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    const tlIdx = (10 * croppedInfo.width + 10) * croppedInfo.channels;
+    const brIdx = (289 * croppedInfo.width + 289) * croppedInfo.channels;
+    assert.ok(
+      croppedPx[tlIdx + 1] > 180 && croppedPx[tlIdx] < 60,
+      'Potongan 1:1 sisi kiri-atas harus tepat mengambil bagian tengah gambar'
+    );
+    assert.ok(
+      croppedPx[brIdx + 1] > 180 && croppedPx[brIdx] < 60,
+      'Potongan 1:1 sisi kanan-bawah harus tepat mengambil bagian tengah gambar'
+    );
+
+    // 2. Gambar PNG transparan potret 240x480 -> kotak 240x240 PNG dengan alpha terjaga
+    const alphaPng = await sharp({
+      create: { width: 240, height: 480, channels: 4, background: { r: 40, g: 120, b: 220, alpha: 0.5 } }
+    })
+      .png()
+      .toBuffer();
+    const croppedPng = await cropImageToSquare(alphaPng);
+    assert.equal(croppedPng.mimeType, 'image/png');
+    const croppedPngMeta = await sharp(croppedPng.buffer).metadata();
+    assert.equal(croppedPngMeta.width, 240);
+    assert.equal(croppedPngMeta.height, 240);
+    assert.equal(croppedPngMeta.hasAlpha, true);
+
+    // 3. Video MP4 320x180 DENGAN audio -> kotak 180x180 MP4 DENGAN trek audio tetap utuh
+    const inMp4Path = path.join(tmpDir, 'sample.mp4');
+    const inGifPath = path.join(tmpDir, 'sample.gif');
+    execFileSync(
+      'ffmpeg',
+      [
+        '-y',
+        '-f',
+        'lavfi',
+        '-i',
+        'testsrc=duration=1.2:size=320x180:rate=15',
+        '-f',
+        'lavfi',
+        '-i',
+        'sine=frequency=440:duration=1.2',
+        '-c:v',
+        'libx264',
+        '-pix_fmt',
+        'yuv420p',
+        '-c:a',
+        'aac',
+        inMp4Path
+      ],
+      { stdio: 'pipe', windowsHide: true }
+    );
+    execFileSync(
+      'ffmpeg',
+      ['-y', '-f', 'lavfi', '-i', 'testsrc=duration=1.0:size=240x150:rate=10', inGifPath],
+      { stdio: 'pipe', windowsHide: true }
+    );
+
+    const mp4Buf = fs.readFileSync(inMp4Path);
+    const gifBuf = fs.readFileSync(inGifPath);
+
+    const probeBuffer = (buf, name) => {
+      const p = path.join(tmpDir, name);
+      fs.writeFileSync(p, buf);
+      const out = execFileSync(
+        'ffprobe',
+        ['-v', 'error', '-show_entries', 'stream=codec_type,width,height', '-of', 'json', p],
+        { encoding: 'utf8', windowsHide: true }
+      );
+      return JSON.parse(out).streams;
+    };
+
+    const croppedVideo = await cropVideoOrGifToSquare(mp4Buf, { asGif: false });
+    assert.equal(croppedVideo.kind, 'video');
+    const videoStreams = probeBuffer(croppedVideo.buffer, 'out_video.mp4');
+    const vStream = videoStreams.find((s) => s.codec_type === 'video');
+    const aStream = videoStreams.find((s) => s.codec_type === 'audio');
+    assert.equal(vStream.width, 180);
+    assert.equal(vStream.height, 180);
+    assert.ok(aStream, 'Audio video biasa harus tetap dipertahankan setelah !crop');
+
+    // 4. GIF animasi 240x150 (lewat cropImageToSquare maupun cropVideoOrGifToSquare) -> MP4 GIF 150x150 tanpa audio
+    const croppedGif = await cropImageToSquare(gifBuf);
+    assert.equal(croppedGif.kind, 'gif');
+    const gifStreams = probeBuffer(croppedGif.buffer, 'out_gif.mp4');
+    assert.equal(gifStreams.length, 1);
+    assert.equal(gifStreams[0].codec_type, 'video');
+    assert.equal(gifStreams[0].width, 150);
+    assert.equal(gifStreams[0].height, 150);
+
+    // 5. Uji end-to-end handleUtilityCommands untuk !crop (foto, video, WhatsApp GIF, durasi panjang, View Once, stiker)
+    const sent = [];
+    let unexpectedDownload = false;
+    const mockSocket = {
+      sendMessage: async (jid, content) => {
+        sent.push({ jid, content });
+        return { key: { id: `crop-msg-${sent.length}` } };
+      }
+    };
+
+    // 5a. Foto biasa -> { image }
+    await handleUtilityCommands({
+      waSocket: mockSocket,
+      downloadMediaBuffer: async () => landscapeJpg,
+      remoteJid: '628111@s.whatsapp.net',
+      senderKey: 'owner',
+      fromMe: true,
+      profile: { isKnown: true, name: 'Pemilik' },
+      messageText: '!crop',
+      msg: {
+        key: { remoteJid: '628111@s.whatsapp.net', id: 'c-img', fromMe: true },
+        message: { imageMessage: { caption: '!crop', mimetype: 'image/jpeg', fileLength: landscapeJpg.length } }
+      },
+      addLog: () => {}
+    });
+    assert.ok(Buffer.isBuffer(sent[0].content.image));
+
+    // 5b. Video biasa -> { video, mimetype: 'video/mp4' } tanpa gifPlayback
+    await handleUtilityCommands({
+      waSocket: mockSocket,
+      downloadMediaBuffer: async () => mp4Buf,
+      remoteJid: '628111@s.whatsapp.net',
+      senderKey: 'owner',
+      fromMe: true,
+      profile: { isKnown: true, name: 'Pemilik' },
+      messageText: '.potong',
+      msg: {
+        key: { remoteJid: '628111@s.whatsapp.net', id: 'c-vid', fromMe: true },
+        message: { videoMessage: { caption: '.potong', mimetype: 'video/mp4', fileLength: mp4Buf.length, seconds: 2 } }
+      },
+      addLog: () => {}
+    });
+    assert.ok(Buffer.isBuffer(sent[1].content.video));
+    assert.equal(sent[1].content.gifPlayback, undefined);
+
+    // 5c. WhatsApp GIF (videoMessage dengan gifPlayback: true) -> { video, gifPlayback: true }
+    await handleUtilityCommands({
+      waSocket: mockSocket,
+      downloadMediaBuffer: async () => mp4Buf,
+      remoteJid: '628111@s.whatsapp.net',
+      senderKey: 'owner',
+      fromMe: true,
+      profile: { isKnown: true, name: 'Pemilik' },
+      messageText: '!square',
+      msg: {
+        key: { remoteJid: '628111@s.whatsapp.net', id: 'c-gif', fromMe: true },
+        message: {
+          videoMessage: {
+            caption: '!square',
+            mimetype: 'video/mp4',
+            fileLength: mp4Buf.length,
+            seconds: 2,
+            gifPlayback: true
+          }
+        }
+      },
+      addLog: () => {}
+    });
+    assert.ok(Buffer.isBuffer(sent[2].content.video));
+    assert.equal(sent[2].content.gifPlayback, true);
+
+    // 5d. Video > 60 detik ditolak SEBELUM diunduh
+    await handleUtilityCommands({
+      waSocket: mockSocket,
+      downloadMediaBuffer: async () => {
+        unexpectedDownload = true;
+        return Buffer.alloc(0);
+      },
+      remoteJid: '628111@s.whatsapp.net',
+      senderKey: 'owner',
+      fromMe: true,
+      profile: { isKnown: true, name: 'Pemilik' },
+      messageText: '!crop',
+      msg: {
+        key: { remoteJid: '628111@s.whatsapp.net', id: 'c-long', fromMe: true },
+        message: { videoMessage: { caption: '!crop', mimetype: 'video/mp4', fileLength: 100000, seconds: 90 } }
+      },
+      addLog: () => {}
+    });
+    assert.equal(unexpectedDownload, false);
+    assert.match(sent[3].content.text, /durasi videonya terlalu panjang/i);
+
+    // 5e. Foto sekali lihat (View Once) ditolak sopan SEBELUM diunduh
+    await handleUtilityCommands({
+      waSocket: mockSocket,
+      downloadMediaBuffer: async () => {
+        unexpectedDownload = true;
+        return Buffer.alloc(0);
+      },
+      remoteJid: '628111@s.whatsapp.net',
+      senderKey: 'owner',
+      fromMe: true,
+      profile: { isKnown: true, name: 'Pemilik' },
+      messageText: '!crop',
+      msg: {
+        key: { remoteJid: '628111@s.whatsapp.net', id: 'c-vo', fromMe: true },
+        message: {
+          viewOnceMessageV2: {
+            message: { imageMessage: { caption: '!crop', mimetype: 'image/jpeg', viewOnce: true } }
+          }
+        }
+      },
+      addLog: () => {}
+    });
+    assert.equal(unexpectedDownload, false);
+    assert.match(sent[4].content.text, /View Once/i);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('!cap renders full-color emojis cleanly alongside Impact text in before/after modes, caches SVGs, and degrades gracefully offline', async () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+
+  // 1. Deteksi emoji akurat: angka ASCII 0-9 / '#' / '*' BUKAN emoji, sedangkan ZWJ/bendera/keycap terdeteksi
+  assert.equal(isEmojiGrapheme('5'), false);
+  assert.equal(isEmojiGrapheme('#'), false);
+  assert.equal(isEmojiGrapheme('A'), false);
+  assert.equal(isEmojiGrapheme('😹'), true);
+  assert.equal(isEmojiGrapheme('❤️‍🔥'), true);
+  assert.equal(isEmojiGrapheme('🇮🇩'), true);
+  assert.equal(isEmojiGrapheme('1️⃣'), true);
+
+  assert.deepEqual(emojiToTwemojiCandidates('😹'), ['1f639']);
+  assert.deepEqual(emojiToTwemojiCandidates('❤️'), ['2764', '2764-fe0f']);
+  assert.deepEqual(emojiToTwemojiCandidates('❤️‍🔥'), ['2764-fe0f-200d-1f525', '2764-200d-1f525']);
+  assert.deepEqual(emojiToTwemojiCandidates('1️⃣'), ['31-20e3', '31-fe0f-20e3']);
+
+  const runs = splitLineIntoRuns('HALO 123😹 🔥');
+  assert.deepEqual(
+    runs.map((r) => [r.type, r.value]),
+    [
+      ['text', 'HALO 123'],
+      ['emoji', '😹'],
+      ['text', ' '],
+      ['emoji', '🔥']
+    ]
+  );
+
+  // 2. Render penuh warna memakai mock SVG berwarna kuning/biru di atas foto abu-abu murni (100% offline deterministik)
+  const tmpCache = fs.mkdtempSync(path.join(os.tmpdir(), 'another-me-emoji-test-'));
+  const mockCatSvg = Buffer.from(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36">' +
+      '<circle cx="18" cy="18" r="16" fill="#FFCC4D"/>' +
+      '<circle cx="10" cy="24" r="5" fill="#5DADEC"/>' +
+      '<circle cx="26" cy="24" r="5" fill="#5DADEC"/>' +
+      '<circle cx="18" cy="21" r="4" fill="#EA596E"/>' +
+      '</svg>',
+    'utf-8'
+  );
+
+  let fetchCalls = 0;
+  const mockFetch = async () => {
+    fetchCalls++;
+    return {
+      ok: true,
+      arrayBuffer: async () => mockCatSvg
+    };
+  };
+
+  try {
+    clearEmojiMemoryCache();
+
+    // Foto abu-abu polos (R=G=B=145): satu-satunya sumber piksel berwarna tinggi hanyalah emoji berwarna!
+    const grayPhoto = await sharp({
+      create: { width: 512, height: 512, channels: 3, background: { r: 145, g: 145, b: 145 } }
+    })
+      .png()
+      .toBuffer();
+
+    const countColoredPixels = async (buf) => {
+      const { data, info } = await sharp(buf).flatten({ background: '#919191' }).raw().toBuffer({ resolveWithObject: true });
+      let colored = 0;
+      for (let i = 0; i < data.length; i += info.channels) {
+        const spread = Math.max(data[i], data[i + 1], data[i + 2]) - Math.min(data[i], data[i + 1], data[i + 2]);
+        if (spread > 50) colored++;
+      }
+      return colored;
+    };
+
+    const beforeOut = await renderCapMeme(grayPhoto, {
+      topText: 'KENAPA?',
+      bottomText: 'HALO BRO😹',
+      blurMode: 'before',
+      blurSigma: 2.8,
+      textBlurSigma: 1.0,
+      emojiOptions: { cacheDir: tmpCache, fetchImpl: mockFetch, useMemoryCache: false }
+    });
+    assert.equal(fetchCalls, 1, 'Fetch jaringan hanya sekali karena hasil disimpan ke cache disk');
+    assert.equal(fs.existsSync(path.join(tmpCache, '1f639.svg')), true, 'Berkas SVG emoji harus tersimpan di cache disk');
+    assert.ok((await countColoredPixels(beforeOut)) > 1500, 'Emoji pada !cap mode before harus tampil berwarna penuh');
+
+    // Panggilan kedua pada stiker dengan mode after harus membaca langsung dari cache disk (0 fetch tambahan)
+    const graySticker = await sharp({
+      create: { width: 512, height: 512, channels: 4, background: { r: 145, g: 145, b: 145, alpha: 255 } }
+    })
+      .webp({ quality: 85 })
+      .toBuffer();
+
+    const stickerOut = await renderCapSticker(graySticker, {
+      bottomText: 'MANTAP😹',
+      blurMode: 'after',
+      blurSigma: 2.8,
+      emojiOptions: { cacheDir: tmpCache, fetchImpl: mockFetch, useMemoryCache: false }
+    });
+    assert.equal(fetchCalls, 1, 'Panggilan kedua harus memakai cache disk tanpa unduh ulang');
+    assert.equal(isValidWebpBuffer(stickerOut), true);
+    assert.ok((await countColoredPixels(stickerOut)) > 1500, 'Emoji pada !cap stiker mode after harus tetap berwarna penuh');
+
+    // 3. Fallback aman saat offline total dan emoji belum ada di cache (tidak boleh error)
+    const offlineCache = path.join(tmpCache, 'empty-offline');
+    const offlineFetch = async () => {
+      throw new Error('network down');
+    };
+    const missingBuf = await fetchEmojiSvgBuffer(['1f525'], {
+      cacheDir: offlineCache,
+      fetchImpl: offlineFetch,
+      useMemoryCache: false
+    });
+    assert.equal(missingBuf, null);
+
+    const offlineOut = await renderCapMeme(grayPhoto, {
+      bottomText: 'OFFLINE 🔥',
+      blurMode: 'before',
+      maxDim: 512,
+      emojiOptions: { cacheDir: offlineCache, fetchImpl: offlineFetch, useMemoryCache: false }
+    });
+    const offlineMeta = await sharp(offlineOut).metadata();
+    assert.equal(offlineMeta.format, 'jpeg');
+    assert.equal(offlineMeta.width, 512);
+  } finally {
+    clearEmojiMemoryCache();
+    fs.rmSync(tmpCache, { recursive: true, force: true });
   }
 });
