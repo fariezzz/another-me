@@ -18,6 +18,7 @@ const {
   resolveCapBlurMode,
   resolveCapTextBlurSigma,
   resolveCapMaxDim,
+  resolveCapFontScale,
   computeCapDegradeParams,
   subsampleFrames,
   validateImageBuffer,
@@ -227,12 +228,32 @@ test('!cap inserts Impact text FIRST then blurs the ENTIRE combined image (photo
 
   // 3. Teks pendek seperti "FARIEZ TIDUR" pada foto potret 768x1024 harus tetap 1 baris,
   //    sedangkan teks panjang seperti "BESOK NGEBOHONG LAGI" baru dipecah menjadi 2 baris seimbang.
-  const shortLayout = layoutImpactBlock('FARIEZ TIDUR', 768, 1024);
+  const shortLayout = layoutImpactBlock('FARIEZ TIDUR', 768, 1024, 1.0);
   assert.equal(shortLayout.lines.length, 1);
   assert.equal(shortLayout.lines[0], 'FARIEZ TIDUR');
 
-  const longLayout = layoutImpactBlock('BESOK NGEBOHONG LAGI', 768, 1024);
+  const longLayout = layoutImpactBlock('BESOK NGEBOHONG LAGI', 768, 1024, 1.0);
   assert.equal(longLayout.lines.length, 2);
+
+  // 4. Ukuran font bawaan tetap proporsional (~12% tinggi pada 640x640) dan bisa diatur lewat CAP_FONT_SCALE
+  const prevFontScale = process.env.CAP_FONT_SCALE;
+  try {
+    delete process.env.CAP_FONT_SCALE;
+    assert.equal(resolveCapFontScale(), 1.0);
+    assert.equal(resolveCapFontScale(0.2), 0.5);
+    assert.equal(resolveCapFontScale(3.0), 1.6);
+
+    const baseSquare = layoutImpactBlock('KIRAYA', 640, 640, 1.0);
+    assert.ok(baseSquare.fontSize <= 84 && baseSquare.fontSize >= 64, `Font bawaan harus proporsional (got ${baseSquare.fontSize})`);
+
+    process.env.CAP_FONT_SCALE = '0.8';
+    assert.equal(resolveCapFontScale(), 0.8);
+    const smallerSquare = layoutImpactBlock('KIRAYA', 640, 640);
+    assert.ok(smallerSquare.fontSize < baseSquare.fontSize, `CAP_FONT_SCALE=0.8 harus memperkecil font (${smallerSquare.fontSize} vs ${baseSquare.fontSize})`);
+  } finally {
+    if (prevFontScale === undefined) delete process.env.CAP_FONT_SCALE;
+    else process.env.CAP_FONT_SCALE = prevFontScale;
+  }
 });
 
 test('!sticker, !wm, and !toimg round-trip cleanly with valid WebP EXIF metadata', async () => {

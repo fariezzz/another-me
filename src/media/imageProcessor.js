@@ -58,6 +58,7 @@ const DEFAULT_CAP_BLUR_SIGMA = clampNumber(
 );
 const FALLBACK_CAP_TEXT_BLUR_SIGMA = 1.0;
 const FALLBACK_CAP_MAX_DIM = 640;
+const FALLBACK_CAP_FONT_SCALE = 1.0;
 const VALID_CAP_BLUR_MODES = new Set(['before', 'after']);
 const MAX_ANIMATED_CAP_FRAMES = 96;
 
@@ -76,6 +77,17 @@ function resolveCapMaxDim(overrideMaxDim) {
     return Math.round(clampNumber(parseInt(rawEnv, 10), FALLBACK_CAP_MAX_DIM, 240, 1080));
   }
   return FALLBACK_CAP_MAX_DIM;
+}
+
+function resolveCapFontScale(overrideScale) {
+  if (overrideScale !== undefined && overrideScale !== null && String(overrideScale).trim() !== '') {
+    return clampNumber(Number(overrideScale), FALLBACK_CAP_FONT_SCALE, 0.5, 1.6);
+  }
+  const rawEnv = process.env.CAP_FONT_SCALE;
+  if (rawEnv !== undefined && String(rawEnv).trim() !== '') {
+    return clampNumber(parseFloat(rawEnv), FALLBACK_CAP_FONT_SCALE, 0.5, 1.6);
+  }
+  return FALLBACK_CAP_FONT_SCALE;
 }
 
 function resolveCapBlurMode(overrideMode) {
@@ -138,6 +150,7 @@ function computeCapTextDegradeParams(textLevel) {
 const DEFAULT_CAP_BLUR_MODE = resolveCapBlurMode();
 const DEFAULT_CAP_TEXT_BLUR_SIGMA = resolveCapTextBlurSigma();
 const DEFAULT_CAP_MAX_DIM = resolveCapMaxDim();
+const DEFAULT_CAP_FONT_SCALE = resolveCapFontScale();
 
 class MediaValidationError extends Error {
   constructor(code, userMessage) {
@@ -796,11 +809,15 @@ function splitBalancedTwoLines(text, style) {
  * 2. Hanya pecah ke 2 baris seimbang bila teks memang panjang (atau pengguna memberi baris baru).
  * 3. Pecah ke 3 baris atau lebih hanya untuk kalimat yang sangat panjang.
  */
-function layoutImpactBlock(upperText, imgWidth, imgHeight) {
-  const maxWidth = imgWidth * 0.94;
-  const maxBlockHeight = imgHeight * 0.29;
-  const startSize = Math.max(28, Math.round(Math.min(imgWidth * 0.23, imgHeight * 0.205)));
-  const minSize = Math.max(18, Math.round(imgWidth * 0.042));
+function layoutImpactBlock(upperText, imgWidth, imgHeight, fontScale) {
+  const safeScale = resolveCapFontScale(fontScale);
+  const maxWidth = imgWidth * 0.90;
+  const maxBlockHeight = Math.min(imgHeight * 0.34, imgHeight * 0.235 * safeScale);
+  const startSize = Math.max(
+    18,
+    Math.round(Math.min(imgWidth * 0.135, imgHeight * 0.12) * safeScale)
+  );
+  const minSize = Math.max(14, Math.round(imgWidth * 0.038 * safeScale));
   const lineHeightRatio = 1.06;
   const hasExplicitNewline = upperText.includes('\n');
 
@@ -808,9 +825,9 @@ function layoutImpactBlock(upperText, imgWidth, imgHeight) {
   let chosenLines = [upperText];
   let found = false;
 
-  // Tahap 1: Prioritaskan 1 baris penuh selama ukuran huruf tetap besar & nyaman dibaca (>= 9.5% lebar gambar)
+  // Tahap 1: Prioritaskan 1 baris penuh selama ukuran huruf tetap proporsional & nyaman dibaca
   if (!hasExplicitNewline) {
-    const singleLineMinSize = Math.max(minSize, Math.round(imgWidth * 0.095));
+    const singleLineMinSize = Math.max(minSize, Math.round(imgWidth * 0.088 * safeScale));
     const widthAtUnit = estimateTextWidthPx(upperText, 1, 'impact');
     if (widthAtUnit > 0) {
       const idealSingleSize = Math.floor((maxWidth * 0.94) / widthAtUnit);
@@ -825,7 +842,7 @@ function layoutImpactBlock(upperText, imgWidth, imgHeight) {
 
   // Tahap 2: Jika memang terlalu panjang untuk 1 baris, prioritaskan 2 baris yang seimbang
   if (!found && !hasExplicitNewline) {
-    const twoLineMinSize = Math.max(minSize, Math.round(imgWidth * 0.068));
+    const twoLineMinSize = Math.max(minSize, Math.round(imgWidth * 0.062 * safeScale));
     const balancedTwo = splitBalancedTwoLines(upperText, 'impact');
     if (balancedTwo.length === 2) {
       const widestUnit = Math.max(
@@ -863,7 +880,7 @@ function layoutImpactBlock(upperText, imgWidth, imgHeight) {
     chosenLines = wrapTextLines(upperText, minSize, maxWidth * 0.94, 'impact');
   }
 
-  const strokeWidth = Math.max(4, Math.round(chosenSize * 0.16));
+  const strokeWidth = Math.max(3, Math.round(chosenSize * 0.155));
   const lineStep = Math.round(chosenSize * lineHeightRatio);
   return { fontSize: chosenSize, lines: chosenLines, strokeWidth, lineStep };
 }
@@ -926,12 +943,12 @@ function validateCapTexts(topText, bottomText) {
 /**
  * Menghitung tata letak seluruh baris teks atas dan/atau bawah untuk !cap.
  */
-function computeCapLineDescriptors({ imgWidth, imgHeight, cleanTop, cleanBottom }) {
+function computeCapLineDescriptors({ imgWidth, imgHeight, cleanTop, cleanBottom, fontScale }) {
   const edgeMarginY = Math.max(12, Math.round(imgHeight * 0.032));
   const descriptors = [];
 
   if (cleanTop) {
-    const topLayout = layoutImpactBlock(cleanTop, imgWidth, imgHeight);
+    const topLayout = layoutImpactBlock(cleanTop, imgWidth, imgHeight, fontScale);
     const topStartY = edgeMarginY + Math.round(topLayout.fontSize * 0.88);
     for (let i = 0; i < topLayout.lines.length; i++) {
       descriptors.push({
@@ -944,7 +961,7 @@ function computeCapLineDescriptors({ imgWidth, imgHeight, cleanTop, cleanBottom 
   }
 
   if (cleanBottom) {
-    const bottomLayout = layoutImpactBlock(cleanBottom, imgWidth, imgHeight);
+    const bottomLayout = layoutImpactBlock(cleanBottom, imgWidth, imgHeight, fontScale);
     const totalLinesOffset = (bottomLayout.lines.length - 1) * bottomLayout.lineStep;
     const bottomLastBaselineY =
       imgHeight - edgeMarginY - Math.round(bottomLayout.strokeWidth * 0.45);
@@ -969,9 +986,15 @@ function computeCapLineDescriptors({ imgWidth, imgHeight, cleanTop, cleanBottom 
  * Membangun lapisan SVG transparan berisi teks gaya Impact (atas dan/atau bawah)
  * yang siap ditempelkan ke foto maupun stiker.
  */
-function buildCapOverlaySvg({ imgWidth, imgHeight, cleanTop, cleanBottom }) {
+function buildCapOverlaySvg({ imgWidth, imgHeight, cleanTop, cleanBottom, fontScale }) {
   const centerX = Math.round(imgWidth / 2);
-  const descriptors = computeCapLineDescriptors({ imgWidth, imgHeight, cleanTop, cleanBottom });
+  const descriptors = computeCapLineDescriptors({
+    imgWidth,
+    imgHeight,
+    cleanTop,
+    cleanBottom,
+    fontScale
+  });
   const svgParts = descriptors.map((d) =>
     buildSingleImpactSvgLine(d.lineText, {
       centerX,
@@ -1165,10 +1188,17 @@ async function renderCapOverlayPng({
   cleanTop,
   cleanBottom,
   textBlurSigma = 0,
+  fontScale,
   emojiOptions = {}
 }) {
   const centerX = Math.round(imgWidth / 2);
-  const descriptors = computeCapLineDescriptors({ imgWidth, imgHeight, cleanTop, cleanBottom });
+  const descriptors = computeCapLineDescriptors({
+    imgWidth,
+    imgHeight,
+    cleanTop,
+    cleanBottom,
+    fontScale
+  });
   const pureSvgParts = [];
   const emojiDescriptors = [];
 
@@ -1388,6 +1418,7 @@ async function renderCapMeme(
     textBlurSigma,
     blurMode,
     maxDim: overrideMaxDim,
+    fontScale,
     emojiOptions,
     returnStages = false
   } = {}
@@ -1399,6 +1430,7 @@ async function renderCapMeme(
   const activeTextBlurSigma =
     activeBlurMode === 'before' ? resolveCapTextBlurSigma(textBlurSigma) : 0;
   const targetMaxDim = resolveCapMaxDim(overrideMaxDim);
+  const activeFontScale = resolveCapFontScale(fontScale);
   const degradeParams = computeCapDegradeParams(safeSigma);
   const textDegradeParams = computeCapTextDegradeParams(activeTextBlurSigma);
 
@@ -1432,6 +1464,7 @@ async function renderCapMeme(
     cleanTop,
     cleanBottom,
     textBlurSigma: 0,
+    fontScale: activeFontScale,
     emojiOptions
   });
 
@@ -1507,7 +1540,8 @@ async function renderCapMeme(
       width: imgWidth,
       height: imgHeight,
       blurSigma: safeSigma,
-      textBlurSigma: activeTextBlurSigma
+      textBlurSigma: activeTextBlurSigma,
+      fontScale: activeFontScale
     };
   }
 
@@ -1530,6 +1564,7 @@ async function renderCapSticker(
     blurSigma,
     textBlurSigma,
     blurMode,
+    fontScale,
     emojiOptions,
     packName = DEFAULT_PACK_NAME,
     author = DEFAULT_PACK_AUTHOR,
@@ -1542,6 +1577,7 @@ async function renderCapSticker(
   const safeSigma = resolveCapBlurSigma(blurSigma);
   const activeTextBlurSigma =
     activeBlurMode === 'before' ? resolveCapTextBlurSigma(textBlurSigma) : 0;
+  const activeFontScale = resolveCapFontScale(fontScale);
   const degradeParams = computeCapDegradeParams(safeSigma);
   const textDegradeParams = computeCapTextDegradeParams(activeTextBlurSigma);
   const targetSize = 512;
@@ -1552,6 +1588,7 @@ async function renderCapSticker(
     cleanTop,
     cleanBottom,
     textBlurSigma: 0,
+    fontScale: activeFontScale,
     emojiOptions
   });
 
@@ -1645,7 +1682,8 @@ async function renderCapSticker(
         height: targetSize,
         pages: 1,
         blurSigma: safeSigma,
-        textBlurSigma: activeTextBlurSigma
+        textBlurSigma: activeTextBlurSigma,
+        fontScale: activeFontScale
       };
     }
 
@@ -1848,7 +1886,8 @@ async function renderCapSticker(
           height: targetSize,
           pages: passFrames.length,
           blurSigma: safeSigma,
-          textBlurSigma: activeTextBlurSigma
+          textBlurSigma: activeTextBlurSigma,
+          fontScale: activeFontScale
         };
       }
       return finalWithExif;
@@ -2053,11 +2092,13 @@ module.exports = {
   DEFAULT_CAP_BLUR_MODE,
   DEFAULT_CAP_TEXT_BLUR_SIGMA,
   DEFAULT_CAP_MAX_DIM,
+  DEFAULT_CAP_FONT_SCALE,
   VALID_CAP_BLUR_MODES,
   resolveCapBlurMode,
   resolveCapBlurSigma,
   resolveCapTextBlurSigma,
   resolveCapMaxDim,
+  resolveCapFontScale,
   computeCapDegradeParams,
   computeCapTextDegradeParams,
   MediaValidationError,
