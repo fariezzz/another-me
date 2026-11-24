@@ -10,6 +10,7 @@ const express = require('express');
 const cors = require('cors');
 const pino = require('pino');
 const qrcode = require('qrcode-terminal');
+const { HttpsProxyAgent } = require('https-proxy-agent');
 const {
   default: makeWASocket,
   useMultiFileAuthState,
@@ -41,6 +42,11 @@ let WHITELIST_ONLY = process.env.WHITELIST_ONLY === 'true';
 let REPLY_GROUPS = process.env.REPLY_GROUPS === 'true';
 const TYPING_DELAY_MIN = parseInt(process.env.TYPING_DELAY_MIN, 10) || 2000;
 const TYPING_DELAY_MAX = parseInt(process.env.TYPING_DELAY_MAX, 10) || 4500;
+// Jeda tenang burst (2026-11-02): pesan beruntun dari satu pengirim
+// ditampung dulu selama jeda ini; tiap pesan baru me-reset timer, jadi
+// balasan hanya dikirim sekali setelah pengirim berhenti mengetik.
+// Bisa diubah lewat env BURST_WINDOW_MS.
+const BURST_WINDOW_MS = parseInt(process.env.BURST_WINDOW_MS, 10) || 4000;
 const PORT = parseInt(process.env.PORT, 10) || 3000;
 
 // Persistensi Pengaturan Bot (Settings Persistence)
@@ -85,6 +91,8 @@ loadPersistedSettings();
 let waSocket = null;
 let connectionStatus = 'connecting'; // 'connecting', 'qr_ready', 'connected', 'disconnected'
 let currentQR = null;
+let currentPairingCode = null;
+let pairingPhone = null;
 let lastDisconnectReason = null;
 const activityLogs = [];
 
@@ -121,7 +129,8 @@ async function startWhatsApp() {
       printQRInTerminal: false,
       auth: state,
       browser: ['Another Me AI', 'Desktop', '1.0.0'],
-      syncFullHistory: false
+      syncFullHistory: false,
+      agent: process.env.HTTPS_PROXY ? new HttpsProxyAgent(process.env.HTTPS_PROXY) : undefined
     });
 
     waSocket.ev.on('connection.update', (update) => {
@@ -152,6 +161,231 @@ async function startWhatsApp() {
     });
 
     waSocket.ev.on('creds.update', saveCreds);
+
+    // Pairing code (opsional, via .env PAIRING_PHONE): dipakai saat QR statis
+    // selalu kedaluwarsa sebelum sempat discan. Hanya diminta jika belum terdaftar.
+    if (process.env.PAIRING_PHONE && !state.creds.registered) {
+      try {
+        pairingPhone = String(process.env.PAIRING_PHONE).replace(/\D/g, '');
+        currentPairingCode = await waSocket.requestPairingCode(pairingPhone);
+        addLog('warn', `Kode pairing siap: ${currentPairingCode}`);
+      } catch (err) {
+        addLog('error', `Gagal meminta kode pairing: ${err.message}`);
+      }
+    }
+
+    // ----------------------------------------------------
+    // Antrean burst (2026-11-02): satu pengirim yang mengirim
+    // beberapa chat berurutan tidak dibalas satu per satu. Pesan-pesan
+    // itu langsung ditandai dibaca dan dicatat ke riwayat sebagai
+    // konteks, lalu setelah BURST_WINDOW_MS tanpa pesan baru, bot
+    // membalas SEKALI dengan fokus ke pesan terakhir. Pesan yang
+    // datang selagi balasan dibuat mendapat jendela tenang sendiri.
+    // ----------------------------------------------------
+    const pendingBursts = new Map();
+
+    function queueBurstMessage(entry) {
+      let burst = pendingBursts.get(entry.remoteJid);
+      if (!burst) {
+        burst = { items: [], timer: null, processing: false };
+        pendingBursts.set(entry.remoteJid, burst);
+      }
+      burst.items.push(entry);
+      // Selama belum diproses, tiap pesan baru me-reset jendela tenang:
+      // balasan hanya jalan setelah pengirim benar-benar berhenti
+      // mengetik selama BURST_WINDOW_MS.
+      if (!burst.processing) {
+        if (burst.timer) clearTimeout(burst.timer);
+        burst.timer = setTimeout(() => flushBurst(entry.remoteJid), BURST_WINDOW_MS);
+      }
+    }
+
+    async function flushBurst(remoteJid) {
+      const burst = pendingBursts.get(remoteJid);
+      if (!burst || burst.processing || burst.items.length === 0) return;
+      burst.timer = null;
+      const batch = burst.items.splice(0, burst.items.length);
+      burst.processing = true;
+      try {
+        await processBurstReply(batch);
+      } catch (err) {
+        addLog('error', `Gagal memproses burst dari ${remoteJid}: ${err.message}`);
+      } finally {
+        burst.processing = false;
+        if (burst.items.length > 0) {
+          if (!burst.timer) burst.timer = setTimeout(() => flushBurst(remoteJid), BURST_WINDOW_MS);
+        } else {
+          pendingBursts.delete(remoteJid);
+        }
+      }
+    }
+
+    // ----------------------------------------------------
+    // !ask (2026-11-23, diubah 2026-11-23 malam): yang jawab
+    // adalah Muse (Kiraya, asisten pribadi), BUKAN model Gemma.
+    // Muse tidak tinggal di dalam proses bot, jadi bot TIDAK
+    // memanggil LLM di sini. Bot hanya menyimpan pertanyaan ke
+    // antrean file data/ask-queue/<id>.json (status pending),
+    // lalu membalas ack instan. Sebuah hook memantau antrean
+    // tiap 10 detik dan membangunkan Muse kalau ada yang baru;
+    // Muse yang menjawab, lalu mengirim jawabannya balik lewat
+    // API /api/send-to-contact dan menandai antrean answered.
+    // Tanpa cadangan Gemma, sesuai permintaan user 22:47 WIB.
+    // ----------------------------------------------------
+    async function handleAskCommand(remoteJid, senderPhone, profile, question, msg) {
+      contextManager.addMessage(senderPhone, 'user', `!ask ${question}`, {
+        senderName: profile.name,
+        phone: senderPhone,
+        category: profile.category,
+        command: '!ask'
+      });
+
+      const queueDir = path.join(__dirname, 'data', 'ask-queue');
+      const askId = Date.now().toString(36) + Math.random().toString(36).substring(2, 6);
+      const queueEntry = {
+        id: askId,
+        phone: senderPhone,
+        name: profile.name,
+        category: profile.category,
+        question,
+        askedAt: new Date().toISOString(),
+        status: 'pending'
+      };
+
+      try {
+        fs.mkdirSync(queueDir, { recursive: true });
+        fs.writeFileSync(path.join(queueDir, `${askId}.json`), JSON.stringify(queueEntry, null, 2), 'utf-8');
+      } catch (qErr) {
+        addLog('error', `Gagal menyimpan antrean !ask dari ${profile.name}: ${qErr.message}`);
+        const failText = 'Maaf, pertanyaanmu gagal diteruskan. Coba kirim !ask lagi sebentar ya.';
+        await waSocket.sendMessage(remoteJid, { text: failText }, { quoted: msg });
+        contextManager.addMessage(senderPhone, 'assistant', failText, { command: '!ask' });
+        return;
+      }
+
+      // Ack instan supaya pengirim tahu pertanyaannya sudah diterima
+      // dan sedang diteruskan ke Muse, bukan hilang tanpa balasan.
+      const ackText = 'Oke, aku teruskan pertanyaanmu ke Kiraya dulu ya, jawabannya menyusul sebentar lagi.';
+      await waSocket.sendMessage(remoteJid, { text: ackText }, { quoted: msg });
+      contextManager.addMessage(senderPhone, 'assistant', ackText, { command: '!ask' });
+      addLog('ask', `!ask dari ${profile.name} masuk antrean (${askId}): "${question}"`, { sender: profile.name, question, askId });
+    }
+
+    async function processBurstReply(batch) {
+      const latest = batch[batch.length - 1];
+      const { remoteJid, senderPhone, senderPushName, profile, messageText, msg } = latest;
+
+      // Status bisa berubah selagi pesan ditampung (mis. !acep off):
+      // cek ulang sebelum membalas, jangan balas pesan yang sudah
+      // tidak boleh dibalas.
+      if (!SERVICE_ENABLED || !contextManager.shouldReply(remoteJid, WHITELIST_ONLY)) {
+        addLog('info', `Burst dari ${profile.name} (${batch.length} pesan) dilewati saat flush (AI nonaktif / bukan whitelist).`);
+        return;
+      }
+
+      if (batch.length > 1) {
+        addLog('info', `Burst dari ${profile.name}: ${batch.length} pesan digabung, fokus menjawab pesan terakhir.`);
+      }
+
+      // Tampilkan status "sedang mengetik..."
+      await waSocket.sendPresenceUpdate('composing', remoteJid);
+      const delay = getRandomDelay(TYPING_DELAY_MIN, TYPING_DELAY_MAX);
+      await sleep(delay);
+
+      // Ambil knowledge base yang relevan untuk kategori ini
+      const relevantKnowledge = knowledgeManager.getInjectedKnowledge(profile.category);
+
+      // Pesan-pesan sebelumnya sudah ada di riwayat; tegaskan ke model
+      // agar menjawab pesan terakhir saja, bukan membalas satu per satu.
+      const focalText = batch.length > 1
+        ? `${messageText}\n[Catatan: lawan bicara baru saja mengirim ${batch.length} chat berurutan; chat-chat sebelumnya sudah ada di riwayat di atas dan hanya konteks. Jawab chat terakhir ini saja, jangan membalas chat-chat sebelumnya satu per satu.]`
+        : messageText;
+
+      // Generate respons via LLM Agent Harness (Function Calling Loop) dengan metadata pengirim
+      const promptMessages = contextManager.buildPromptMessages(remoteJid, focalText, relevantKnowledge, senderPushName);
+      let agentResult = { replyText: '', actions: [], toolCallsLog: [] };
+
+      try {
+        agentResult = await llm.runAgentLoop(promptMessages, {
+          category: profile.category,
+          senderPhone,
+          senderName: profile.name,
+          senderPushName
+        });
+      } catch (aiErr) {
+        addLog('error', `Gagal menjalankan Agent Loop LLM: ${aiErr.message}`);
+        await waSocket.sendPresenceUpdate('paused', remoteJid);
+        return;
+      }
+
+      const replyText = agentResult.replyText;
+
+      // Catat pemanggilan tools di log aktivitas jika ada
+      if (agentResult.toolCallsLog && agentResult.toolCallsLog.length > 0) {
+        for (const tlog of agentResult.toolCallsLog) {
+          addLog('info', `🔧 Tool Call [${tlog.name}] -> Args: ${JSON.stringify(tlog.args)}`, {
+            tool: tlog.name,
+            result: tlog.result
+          });
+        }
+      }
+
+      // Kirim balasan teks (maks 2 balon per balasan, 2026-11-02;
+      // tiap balon diawali huruf kapital, berlaku semua kontak)
+      const replyBubbles = llm.splitIntoMessages(replyText, 2).map((b) => llm.capitalizeFirstLetter(b));
+
+      // Jangan gagal diam-diam lagi: kalau balasan bersihnya kosong,
+      // catat di log supaya terlihat di dashboard, bukan hilang begitu saja.
+      if (replyBubbles.length === 0) {
+        addLog('error', `Balasan AI kosong untuk ${profile.name} setelah dibersihkan (pesan: "${messageText}") - tidak ada balasan dikirim.`);
+      }
+
+      if (replyBubbles.length > 0) {
+        for (let i = 0; i < replyBubbles.length; i++) {
+          const bubbleText = replyBubbles[i];
+          if (!bubbleText || bubbleText.trim().length === 0) continue;
+
+          // Jika bukan chat pertama, beri jeda mengetik singkat antar balon chat
+          if (i > 0) {
+            await waSocket.sendPresenceUpdate('composing', remoteJid);
+            const interDelay = getRandomDelay(1500, 2800);
+            await sleep(interDelay);
+          }
+
+          await waSocket.sendPresenceUpdate('paused', remoteJid);
+          // Untuk bubble pertama bisa di-quote ke pesan terakhir pengirim, bubble selanjutnya dikirim langsung
+          const sendOptions = i === 0 ? { quoted: msg } : {};
+          await waSocket.sendMessage(remoteJid, { text: bubbleText }, sendOptions);
+
+          // Simpan ke riwayat memori
+          contextManager.addMessage(senderPhone, 'assistant', bubbleText);
+
+          addLog('reply', `Balasan AI [${i + 1}/${replyBubbles.length}] terkirim ke ${profile.name}: "${bubbleText}"`, {
+            recipient: profile.name,
+            reply: bubbleText
+          });
+        }
+      }
+
+      // Eksekusi actions lanjutan dari tools (misal: pengiriman stiker)
+      if (agentResult.actions && agentResult.actions.length > 0) {
+        for (const act of agentResult.actions) {
+          if (act.type === 'send_sticker' && act.filePath) {
+            try {
+              const stickerBuffer = fs.readFileSync(act.filePath);
+              await waSocket.sendMessage(remoteJid, { sticker: stickerBuffer });
+              addLog('reply', `Stiker [${act.tag}] terkirim ke ${profile.name}`);
+              // Catatan internal saja (systemNote): jangan sampai
+              // penanda ini masuk prompt sebagai ucapan asisten, karena
+              // model akan menirunya di balasan berikutnya.
+              contextManager.addMessage(senderPhone, 'assistant', `[Mengirim Stiker: ${act.tag}]`, { systemNote: true });
+            } catch (stkErr) {
+              addLog('error', `Gagal mengirim stiker [${act.tag}]: ${stkErr.message}`);
+            }
+          }
+        }
+      }
+    }
 
     waSocket.ev.on('messages.upsert', async (m) => {
       try {
@@ -213,6 +447,89 @@ async function startWhatsApp() {
           const senderPushName = msg.pushName || '';
           const profile = contextManager.getContactProfile(remoteJid, senderPushName);
 
+          // Simpan JID asli pengirim (penting: ID kontak bisa berupa LID,
+          // bukan nomor HP, dan JID inilah alamat pengiriman yang benar).
+          try {
+            const jidsFile = path.join(__dirname, 'data', 'contact_jids.json');
+            let jids = {};
+            if (fs.existsSync(jidsFile)) jids = JSON.parse(fs.readFileSync(jidsFile, 'utf-8'));
+            jids[senderPhone] = { jid: remoteJid, updatedAt: new Date().toISOString() };
+            fs.writeFileSync(jidsFile, JSON.stringify(jids, null, 2), 'utf-8');
+          } catch {}
+
+          // Command !ask (2026-11-23, diubah malam harinya): tanya
+          // langsung ke Muse (Kiraya), bukan ke model Gemma. Bisa
+          // dipakai aku (Kiraya) maupun lawan bicara, selama nomornya
+          // terdaftar di contacts.json. Ditangani SEBELUM gate
+          // whitelist/enabled seperti !acep, supaya tetap jalan walau
+          // AI kontak itu sedang OFF, dan dibalas ack langsung
+          // (tidak masuk antrean burst). Jawaban menyusul lewat hook
+          // antrean tiap 10 detik. Alias: !tanya.
+          const cmdText = messageText.trim().toLowerCase();
+          if (profile.isKnown && (cmdText === '!ask' || cmdText.startsWith('!ask ') || cmdText === '!tanya' || cmdText.startsWith('!tanya '))) {
+            const question = messageText.trim().replace(/^!(?:ask|tanya)\s*/i, '').trim();
+            if (!question) {
+              const usage = 'Pakai: !ask <pertanyaanmu>, contoh: !ask ibu kota Australia apa?';
+              contextManager.addMessage(senderPhone, 'user', messageText, {
+                senderName: profile.name,
+                pushName: senderPushName,
+                phone: senderPhone,
+                category: profile.category,
+                command: '!ask'
+              });
+              await waSocket.sendMessage(remoteJid, { text: usage });
+              contextManager.addMessage(senderPhone, 'assistant', usage, { command: '!ask' });
+              continue;
+            }
+            await waSocket.readMessages([msg.key]);
+            await handleAskCommand(remoteJid, senderPhone, profile, question, msg);
+            continue;
+          }
+
+          // Command !acep: on/off status AI kontak pengirim, ditangani di
+          // script SEBELUM gate whitelist/enabled, supaya command tetap
+          // bisa menyalakan lagi AI yang sedang OFF. Hanya untuk kontak
+          // terdaftar. Service global TIDAK disentuh, hanya status AI
+          // kontak ini. Pesan natural language "acep ..." biasa TIDAK
+          // memicu toggle, hanya command ini.
+          //   !acep        -> toggle (ON jadi OFF, OFF jadi ON)
+          //   !acep on     -> paksa ON (juga: nyala, aktif)
+          //   !acep off    -> paksa OFF (juga: mati, nonaktif)
+          //   !acep status -> lapor status saat ini, tanpa mengubah
+          // (cmdText sudah didefinisikan di atas, di handler !ask.)
+          if (profile.isKnown && (cmdText === '!acep' || cmdText.startsWith('!acep '))) {
+            const cmdArg = cmdText.replace(/^!acep\s*/, '').trim();
+            let reply = null;
+            let newState = null;
+            if (cmdArg === 'status') {
+              reply = `acep lagi ${profile.enabled === false ? 'off' : 'on'}`;
+            } else if (['on', 'nyala', 'aktif', 'enable', '1'].includes(cmdArg)) {
+              newState = true;
+            } else if (['off', 'mati', 'nonaktif', 'disable', '0'].includes(cmdArg)) {
+              newState = false;
+            } else if (cmdArg === '') {
+              newState = profile.enabled === false;
+            } else {
+              reply = 'pakai: !acep on / !acep off / !acep (toggle) / !acep status';
+            }
+            if (newState !== null) {
+              contextManager.contacts[senderPhone].enabled = newState;
+              contextManager.saveContacts();
+              reply = newState ? 'acep on lagi ya' : 'oke, acep off dulu ya';
+              addLog('acep', `Status AI ${profile.name} diubah lewat command !acep menjadi: ${newState ? 'ON' : 'OFF'} (service global tidak diubah).`);
+            }
+            contextManager.addMessage(senderPhone, 'user', messageText, {
+              senderName: profile.name,
+              pushName: senderPushName,
+              phone: senderPhone,
+              category: profile.category,
+              command: '!acep'
+            });
+            await waSocket.sendMessage(remoteJid, { text: reply });
+            contextManager.addMessage(senderPhone, 'assistant', reply, { command: '!acep' });
+            continue;
+          }
+
           // Evaluasi aturan whitelist & toggle kontak
           const allowed = contextManager.shouldReply(remoteJid, WHITELIST_ONLY);
           if (!allowed) {
@@ -222,6 +539,19 @@ async function startWhatsApp() {
               phone: senderPhone,
               message: messageText
             });
+            // Catat saja pesan kontak yang dipantau (Angel dan Kiraya) yang
+            // dilewati saat AI kontak OFF ke riwayat, supaya konteksnya
+            // tetap ada saat AI dinyalakan lagi lewat !acep. Pencatatan
+            // ini TIDAK mengubah status apa pun.
+            if (profile.category === 'pacar' || profile.category === 'teman_dekat') {
+              contextManager.addMessage(senderPhone, 'user', messageText, {
+                senderName: profile.name,
+                pushName: senderPushName,
+                phone: senderPhone,
+                category: profile.category,
+                skippedWhileAiOff: true
+              });
+            }
             continue;
           }
 
@@ -233,6 +563,7 @@ async function startWhatsApp() {
           });
 
           // Simpan pesan lawan bicara beserta metadata sender ke riwayat percakapan
+          // (langsung, supaya jadi konteks — bukan ditunggu sampai dibalas)
           contextManager.addMessage(senderPhone, 'user', messageText, {
             senderName: profile.name,
             pushName: senderPushName,
@@ -240,91 +571,13 @@ async function startWhatsApp() {
             category: profile.category
           });
 
-          // Tandai sudah dibaca
+          // Tandai sudah dibaca — pesan atas hanya dibaca & dipahami
+          // konteksnya, tidak langsung dibalas satu per satu.
           await waSocket.readMessages([msg.key]);
 
-          // Tampilkan status "sedang mengetik..."
-          await waSocket.sendPresenceUpdate('composing', remoteJid);
-          const delay = getRandomDelay(TYPING_DELAY_MIN, TYPING_DELAY_MAX);
-          await sleep(delay);
-
-          // Ambil knowledge base yang relevan untuk kategori ini
-          const relevantKnowledge = knowledgeManager.getInjectedKnowledge(profile.category);
-
-          // Generate respons via LLM Agent Harness (Function Calling Loop) dengan metadata pengirim
-          const promptMessages = contextManager.buildPromptMessages(remoteJid, messageText, relevantKnowledge, senderPushName);
-          let agentResult = { replyText: '', actions: [], toolCallsLog: [] };
-
-          try {
-            agentResult = await llm.runAgentLoop(promptMessages, {
-              category: profile.category,
-              senderPhone,
-              senderName: profile.name,
-              senderPushName
-            });
-          } catch (aiErr) {
-            addLog('error', `Gagal menjalankan Agent Loop LLM: ${aiErr.message}`);
-            await waSocket.sendPresenceUpdate('paused', remoteJid);
-            continue;
-          }
-
-          const replyText = agentResult.replyText;
-
-          // Catat pemanggilan tools di log aktivitas jika ada
-          if (agentResult.toolCallsLog && agentResult.toolCallsLog.length > 0) {
-            for (const tlog of agentResult.toolCallsLog) {
-              addLog('info', `🔧 Tool Call [${tlog.name}] -> Args: ${JSON.stringify(tlog.args)}`, {
-                tool: tlog.name,
-                result: tlog.result
-              });
-            }
-          }
-
-          // Kirim balasan teks (mendukung multi-bubble beruntun)
-          const replyBubbles = llm.splitIntoMessages(replyText);
-
-          if (replyBubbles.length > 0) {
-            for (let i = 0; i < replyBubbles.length; i++) {
-              const bubbleText = replyBubbles[i];
-              if (!bubbleText || bubbleText.trim().length === 0) continue;
-
-              // Jika bukan chat pertama, beri jeda mengetik singkat antar balon chat
-              if (i > 0) {
-                await waSocket.sendPresenceUpdate('composing', remoteJid);
-                const interDelay = getRandomDelay(1500, 2800);
-                await sleep(interDelay);
-              }
-
-              await waSocket.sendPresenceUpdate('paused', remoteJid);
-              // Untuk bubble pertama bisa di-quote ke pesan pengirim, bubble selanjutnya dikirim langsung
-              const sendOptions = i === 0 ? { quoted: msg } : {};
-              await waSocket.sendMessage(remoteJid, { text: bubbleText }, sendOptions);
-
-              // Simpan ke riwayat memori
-              contextManager.addMessage(senderPhone, 'assistant', bubbleText);
-
-              addLog('reply', `Balasan AI [${i + 1}/${replyBubbles.length}] terkirim ke ${profile.name}: "${bubbleText}"`, {
-                recipient: profile.name,
-                reply: bubbleText
-              });
-            }
-          }
-
-          // Eksekusi actions lanjutan dari tools (misal: pengiriman stiker)
-          if (agentResult.actions && agentResult.actions.length > 0) {
-            for (const act of agentResult.actions) {
-              if (act.type === 'send_sticker' && act.filePath) {
-                try {
-                  const stickerBuffer = fs.readFileSync(act.filePath);
-                  await waSocket.sendMessage(remoteJid, { sticker: stickerBuffer });
-                  addLog('reply', `Stiker [${act.tag}] terkirim ke ${profile.name}`);
-                  contextManager.addMessage(senderPhone, 'assistant', `[Mengirim Stiker: ${act.tag}]`);
-                } catch (stkErr) {
-                  addLog('error', `Gagal mengirim stiker [${act.tag}]: ${stkErr.message}`);
-                }
-              }
-            }
-          }
+          // Tampung ke antrean burst: balasan dikirim sekali setelah
+          // jeda tenang, dengan fokus ke pesan terakhir.
+          queueBurstMessage({ remoteJid, senderPhone, senderPushName, profile, messageText, msg });
         }
       } catch (err) {
         addLog('error', `Error processing message: ${err.message}`);
@@ -357,7 +610,8 @@ app.get('/api/status', async (req, res) => {
     whatsapp: {
       status: connectionStatus,
       qrAvailable: Boolean(currentQR),
-      qr: currentQR
+      qr: currentQR,
+      pairingCode: currentPairingCode
     },
     llm: {
       baseUrl: llm.baseUrl,
@@ -377,6 +631,136 @@ app.get('/api/status', async (req, res) => {
       toolsAvailable: toolRegistry.getToolDefinitions().map(t => t.function.name)
     }
   });
+});
+
+// Minta kode pairing 8 digit untuk nomor yang diberikan (hanya lokal).
+// Nomor tidak disimpan permanen di sini; dipakai sekali untuk request kode.
+app.post('/api/pairing-code', async (req, res) => {
+  try {
+    if (!waSocket) return res.status(503).json({ success: false, error: 'WhatsApp belum jalan' });
+    const phone = String(req.body?.phone || '').replace(/\D/g, '');
+    if (!/^\d{8,15}$/.test(phone)) return res.status(400).json({ success: false, error: 'Nomor tidak valid, pakai digit kode negara, misal 62812...' });
+    pairingPhone = phone;
+    currentPairingCode = await waSocket.requestPairingCode(phone);
+    addLog('warn', `Kode pairing siap: ${currentPairingCode}`);
+    res.json({ success: true, pairingCode: currentPairingCode });
+  } catch (err) {
+    addLog('error', `Gagal meminta kode pairing: ${err.message}`);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Kirim pesan manual lewat WhatsApp (inisiatif pemilik, bukan balasan AI).
+// Sengaja TIDAK memakai gate serviceEnabled/whitelist: ini aksi eksplisit
+// dari pemilik lewat dashboard (yang dilindungi Cloudflare Access), bukan
+// balasan otomatis. Tetap butuh WhatsApp connected.
+app.post('/api/send-message', async (req, res) => {
+  try {
+    if (!waSocket || connectionStatus !== 'connected') {
+      return res.status(503).json({ success: false, error: 'WhatsApp belum connected' });
+    }
+    let phone = String(req.body?.phone || '').replace(/\D/g, '');
+    if (phone.startsWith('0')) phone = '62' + phone.slice(1);
+    if (!/^\d{8,15}$/.test(phone)) {
+      return res.status(400).json({ success: false, error: 'Nomor tidak valid, pakai digit kode negara, misal 62812... (boleh diawali 0 atau +62)' });
+    }
+    const message = String(req.body?.message || '').trim();
+    if (!message) return res.status(400).json({ success: false, error: 'Pesan tidak boleh kosong' });
+    if (message.length > 4000) return res.status(400).json({ success: false, error: 'Pesan maksimal 4000 karakter' });
+
+    const jid = `${phone}@s.whatsapp.net`;
+    // Resolusi JID: utamakan JID tersimpan dari pesan masuk / contact info,
+    // karena ID kontak bisa berupa LID (@lid), bukan nomor HP. Mengirim LID
+    // lewat @s.whatsapp.net terbukti tidak sampai (tes Kiraya 20:00 WIB),
+    // sedangkan lewat @lid terbukti sampai (tes Kiraya 20:26 WIB).
+    let targetJid = null;
+    try {
+      const jidsFile = path.join(__dirname, 'data', 'contact_jids.json');
+      if (fs.existsSync(jidsFile)) {
+        const jids = JSON.parse(fs.readFileSync(jidsFile, 'utf-8'));
+        if (jids[phone]?.jid) targetJid = jids[phone].jid;
+      }
+    } catch {}
+    if (!targetJid) targetJid = jid;
+    // Resolusi JID: nomor yang terdaftar bisa jadi nomor telepon biasa
+    // (@s.whatsapp.net) atau LID privasi WhatsApp (@lid). Coba kenali
+    // lewat onWhatsApp dulu, fallback ke @s.whatsapp.net kalau gagal.
+    // (Lewati langkah ini kalau JID sudah tersimpan di atas.)
+    if (targetJid === jid) {
+    try {
+      if (typeof waSocket.onWhatsApp === 'function') {
+        const checked = await waSocket.onWhatsApp(jid);
+        if (checked?.[0]?.exists && checked[0].jid) targetJid = checked[0].jid;
+        else {
+          const checkedLid = await waSocket.onWhatsApp(`${phone}@lid`);
+          if (checkedLid?.[0]?.exists && checkedLid[0].jid) targetJid = checkedLid[0].jid;
+        }
+      }
+    } catch { /* pakai fallback @s.whatsapp.net */ }
+    }
+    // Hormati pemisah multi-bubble "---" seperti balasan bot.
+    const bubbles = llm.splitIntoMessages(message);
+    const sentIds = [];
+    for (let i = 0; i < bubbles.length; i++) {
+      if (i > 0) await sleep(getRandomDelay(1500, 2800));
+      const sent = await waSocket.sendMessage(targetJid, { text: bubbles[i] });
+      if (sent?.key?.id) sentIds.push(sent.key.id);
+      contextManager.addMessage(phone, 'assistant', bubbles[i], { manualSend: true });
+    }
+    const profile = contextManager.getContactProfile(targetJid, '');
+    addLog('manual-send', `Pesan manual terkirim ke ${profile.name || phone} (${bubbles.length} balon): "${message.slice(0, 120)}"`, { phone, bubbles: bubbles.length });
+    res.json({ success: true, phone, jid: targetJid, bubbles: bubbles.length, messageIds: sentIds });
+  } catch (err) {
+    addLog('error', `Gagal mengirim pesan manual: ${err.message}`);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Kirim pesan manual ke kontak terdaftar berdasarkan nama atau ID kontak,
+// memakai JID asli yang tersimpan dari pesan masuk terakhir (bukan menebak
+// @s.whatsapp.net dari ID kontak, karena ID bisa berupa LID).
+app.post('/api/send-to-contact', async (req, res) => {
+  try {
+    if (!waSocket || connectionStatus !== 'connected') {
+      return res.status(503).json({ success: false, error: 'WhatsApp belum connected' });
+    }
+    const query = String(req.body?.nameOrPhone || req.body?.name || req.body?.phone || '').trim().toLowerCase();
+    const message = String(req.body?.message || '').trim();
+    if (!query) return res.status(400).json({ success: false, error: 'Nama atau ID kontak wajib diisi' });
+    if (!message) return res.status(400).json({ success: false, error: 'Pesan tidak boleh kosong' });
+    if (message.length > 4000) return res.status(400).json({ success: false, error: 'Pesan maksimal 4000 karakter' });
+
+    const entry = Object.entries(contextManager.contacts).find(([phone, c]) =>
+      phone === query.replace(/\D/g, '') || String(c.name || '').toLowerCase().includes(query));
+    if (!entry) return res.status(404).json({ success: false, error: 'Kontak tidak ditemukan di daftar kontak' });
+    const [phone, contact] = entry;
+
+    let targetJid = null;
+    try {
+      const jidsFile = path.join(__dirname, 'data', 'contact_jids.json');
+      if (fs.existsSync(jidsFile)) {
+        const jids = JSON.parse(fs.readFileSync(jidsFile, 'utf-8'));
+        if (jids[phone]?.jid) targetJid = jids[phone].jid;
+      }
+    } catch {}
+    if (!targetJid) {
+      return res.status(409).json({ success: false, error: 'JID kontak belum tersimpan: tunggu kontak mengirim pesan dulu, atau kirim pakai nomor HP asli lewat /api/send-message', phone, contactName: contact.name });
+    }
+
+    const bubbles = llm.splitIntoMessages(message);
+    const sentIds = [];
+    for (let i = 0; i < bubbles.length; i++) {
+      if (i > 0) await sleep(getRandomDelay(1500, 2800));
+      const sent = await waSocket.sendMessage(targetJid, { text: bubbles[i] });
+      if (sent?.key?.id) sentIds.push(sent.key.id);
+      contextManager.addMessage(phone, 'assistant', bubbles[i], { manualSend: true });
+    }
+    addLog('manual-send', `Pesan manual terkirim ke ${contact.name} (${bubbles.length} balon) via JID tersimpan.`, { phone, bubbles: bubbles.length });
+    res.json({ success: true, phone, contactName: contact.name, jid: targetJid, bubbles: bubbles.length, messageIds: sentIds });
+  } catch (err) {
+    addLog('error', `Gagal mengirim ke kontak: ${err.message}`);
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 // Toggle Master Service ON/OFF
@@ -660,7 +1044,8 @@ app.post('/api/simulation/chat', async (req, res) => {
       'Pisahkan setiap balon chat terpisah dengan penanda garis tiga: "---".',
       '',
       '--- PENTING ---',
-      'Hanya hasilkan teks balasan WhatsApp tanpa format kode, tanpa penjelasan, dan tanpa dialog ganda.'
+      'Hanya hasilkan teks balasan WhatsApp tanpa format kode, tanpa penjelasan, dan tanpa dialog ganda.',
+      'JANGAN PERNAH menulis penalaran internalmu di balasan: tanpa tag <thought> atau <think>, tanpa "Self-Correction:", tanpa "Draft:", tanpa kalimat seperti "aku akan memanggil tool...". Kirim hanya balasan final untuk lawan bicara.'
     ].filter(Boolean).join('\n');
 
     const promptMessages = [{ role: 'system', content: systemInstructions }];
@@ -695,7 +1080,7 @@ app.post('/api/simulation/chat', async (req, res) => {
 
     addLog('info', `🧪 Simulasi [${simCategory}]: "${message}" -> "${agentResult.replyText}"`);
 
-    const replyBubbles = llm.splitIntoMessages(agentResult.replyText);
+    const replyBubbles = llm.splitIntoMessages(agentResult.replyText, 2).map((b) => llm.capitalizeFirstLetter(b));
 
     res.json({
       success: true,

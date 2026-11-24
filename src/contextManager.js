@@ -350,24 +350,22 @@ class ContextManager {
         : 'Jika belum ada stiker di koleksi, cukup balas dengan teks.',
       '',
       '--- ATURAN PENGIRIMAN MULTI-CHAT (MULTI-BUBBLE) ---',
-      'Orang Indonesia saat chatting di WhatsApp sering mengirim beberapa chat pendek berurutan sesuai alur pikiran mereka.',
-      'Pikirkan: Apakah lebih natural jika dipecah menjadi beberapa chat terpisah? (Misal chat 1 sapaan/reaksi awal, chat 2 inti cerita/pertanyaan, chat 3 tanggapan tambahan, dsb).',
-      'Jika kamu ingin mengirim LEBIH DARI SATU balon chat terpisah, pisahkan setiap balon chat dengan penanda garis tiga: "---".',
-      'Contoh 1:',
+      'Orang Indonesia saat chatting di WhatsApp kadang mengirim chat pendek berurutan, tapi jangan berlebihan: kebanyakan balasan cukup 1 balon chat saja.',
+      'Hanya pecah jadi 2 balon kalau benar-benar ada dua bagian yang jelas berbeda, mis. reaksi singkat lalu pertanyaan lanjutan. Jangan pakai 2 balon untuk setiap balasan, dan jangan pernah mengirim 3 balon atau lebih.',
+      'MAKSIMAL 2 balon chat per balasan, tanpa kecuali. Kalau idemu butuh lebih, gabungkan sisanya ke balon kedua.',
+      'Jika kamu ingin mengirim 2 balon chat terpisah, pisahkan dengan penanda garis tiga: "---".',
+      'Contoh:',
       'Hay hay',
       '---',
       'ada apa?',
-      'Contoh 2:',
-      'wkwkwk kocak banget anjir',
-      '---',
-      'terus lu jadinya gimana sama dia?',
-      '---',
-      'ceritain dong penasaran gw',
-      'Kamu BEBAS mengirim berapa pun jumlah balon chat yang menurutmu wajar dan natural sesuai emosi dan panjang obrolan, tanpa dibatasi jumlahnya.',
       'Jika hanya butuh 1 balon chat saja, cukup ketik 1 teks biasa tanpa tanda "---".',
       '',
       '--- PENTING ---',
-      'Hanya hasilkan teks balasan persis apa yang akan saya ketik di WhatsApp. Jangan tambahkan penjelasan, jangan buat dialog dua orang, dan jangan gunakan prefiks seperti "Balasan:".'
+      'Hanya hasilkan teks balasan persis apa yang akan saya ketik di WhatsApp. Jangan tambahkan penjelasan, jangan buat dialog dua orang, dan jangan gunakan prefiks seperti "Balasan:".',
+      'JANGAN PERNAH menulis penalaran internalmu di balasan: tanpa tag <thought> atau <think>, tanpa "Self-Correction:", tanpa "Draft:", tanpa kalimat seperti "aku akan memanggil tool...". Kirim hanya balasan final untuk lawan bicara.',
+      'JANGAN PERNAH menulis pemanggilan tool sebagai teks, mis. "call:send_sticker(sticker_tag=...)" atau "send_sticker(...)": kalau ingin mengirim stiker, gunakan tool call bawaan send_sticker, bukan mengetiknya di balasan.',
+      'JANGAN PERNAH menulis penanda "[Mengirim Stiker: ...]" atau pengumuman stiker apa pun di balasan: stiker yang kamu pilih lewat tool dikirim otomatis secara terpisah, jadi teks balasanmu hanya berisi kata-kata biasa.',
+      'Awali setiap balon chat dengan huruf kapital, jangan huruf kecil semua. Aturan ini berlaku untuk semua lawan bicara dan mengalahkan contoh balasan lama yang diawali huruf kecil.'
     ].filter(Boolean).join('\n');
 
     const messages = [{ role: 'system', content: systemInstructions }];
@@ -383,9 +381,16 @@ class ContextManager {
 
     const history = this.getHistory(profile.phone);
     for (const h of history) {
+      // Penanda stiker internal tidak boleh masuk ke prompt sebagai
+      // ucapan asisten: model meniru format itu dan menuliskannya
+      // kembali di balasan (bocor 2026-11-02). Lewati penanda murni,
+      // dan bersihkan penanda yang menempel di pesan lain.
+      if (h.meta && h.meta.systemNote) continue;
+      const historyContent = (h.content || '').replace(/\[Mengirim Sti[ck]\w*[^\]]*\]/gi, '').trim();
+      if (!historyContent) continue;
       messages.push({
         role: h.role,
-        content: h.content
+        content: historyContent
       });
     }
 

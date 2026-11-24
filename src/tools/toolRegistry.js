@@ -309,7 +309,7 @@ class ToolRegistry {
       terkirim: true,
       tag: cleanTag,
       fileName: matchedFile,
-      catatan_konteks: `Stiker '${matchedFile}' telah dijadwalkan untuk dikirim bersama pesan teks balasanmu.`
+      catatan_konteks: `Stiker '${matchedFile}' akan dikirim otomatis secara terpisah setelah balasan teksmu. Jangan menulis '[Mengirim Stiker: ...]' atau pengumuman stiker apa pun di teks balasanmu; cukup kirim teks balasan biasa.`
     };
   }
 

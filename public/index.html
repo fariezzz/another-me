@@ -315,6 +315,23 @@
 
     </div>
 
+    <!-- Row: Kirim Pesan Manual -->
+    <div class="bg-white rounded-xl border border-slate-200 p-4 shadow-xs">
+      <h2 class="text-xs font-bold uppercase tracking-wider text-slate-700 mb-1">Kirim Pesan Manual</h2>
+      <p class="text-xs text-slate-500 mb-3">Pesan inisiatif dari akun WhatsApp ini, bukan balasan AI. Pisahkan dengan "---" untuk multi-bubble. Tidak terikat whitelist maupun service auto-reply.</p>
+      <form onsubmit="handleSendManual(event)" class="space-y-3 text-xs">
+        <select id="select-manual-contact" onchange="document.getElementById('input-manual-phone').value = this.value" class="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-slate-900 focus:outline-none focus:border-emerald-500">
+          <option value="">Pilih dari daftar kontak...</option>
+        </select>
+        <input type="text" id="input-manual-phone" required placeholder="Nomor tujuan, misal 62812... (boleh 08... atau +62...)" class="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-slate-900 focus:outline-none focus:border-emerald-500 font-mono">
+        <textarea id="input-manual-message" rows="3" required placeholder="Tulis pesan yang akan dikirim..." class="w-full bg-slate-50 border border-slate-300 rounded-lg p-3 text-slate-900 focus:outline-none focus:border-emerald-500"></textarea>
+        <button type="submit" id="btn-manual-send" class="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg shadow-2xs cursor-pointer transition-colors">
+          Kirim via WhatsApp
+        </button>
+        <p id="manual-send-status" class="text-slate-500"></p>
+      </form>
+    </div>
+
     <!-- Row 4: Log Aktivitas Konsol -->
     <div class="bg-white rounded-xl border border-slate-200 p-4 shadow-xs">
       <div class="flex items-center justify-between mb-3">
@@ -950,6 +967,33 @@
       }
     }
 
+    async function handleSendManual(e) {
+      e.preventDefault();
+      const statusEl = document.getElementById('manual-send-status');
+      const btn = document.getElementById('btn-manual-send');
+      const phone = document.getElementById('input-manual-phone').value.trim();
+      const message = document.getElementById('input-manual-message').value.trim();
+      if (!phone || !message) { statusEl.textContent = 'Nomor dan pesan wajib diisi.'; return; }
+      btn.disabled = true;
+      statusEl.textContent = 'Mengirim...';
+      try {
+        const res = await fetch('/api/send-message', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone, message })
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Gagal mengirim');
+        statusEl.textContent = `Terkirim ke ${data.phone} (${data.bubbles} balon).`;
+        document.getElementById('input-manual-message').value = '';
+        loadLogs();
+      } catch (err) {
+        statusEl.textContent = `Gagal: ${err.message}`;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
     function updateKnob(knobId, btnId, active) {
       const knob = document.getElementById(knobId);
       const btn = document.getElementById(btnId);
@@ -986,13 +1030,13 @@
         const match = text.match(/Tool Call \[([^\]]+)\]/);
         return `AI menggunakan tool: ${match ? match[1] : 'Agent Tool'}`;
       }
+      // Tampilkan isi pesan/balasan juga, bukan hanya nama pengirim,
+      // supaya log bisa dibaca (sebelumnya isi pesan dibuang di tampilan).
       if (text.startsWith('Balasan AI')) {
-        const match = text.match(/Balasan AI \[[^\]]+\] terkirim ke ([^:]+):/);
-        return match ? `Balasan AI terkirim ke ${match[1]}` : 'Balasan AI terkirim';
+        return text;
       }
       if (text.startsWith('Pesan Masuk')) {
-        const match = text.match(/Pesan Masuk dari ([^:]+):/);
-        return match ? `Pesan masuk dari ${match[1]}` : 'Pesan masuk diterima';
+        return text;
       }
       if (text.includes('Stiker') && text.includes('terkirim')) {
         const match = text.match(/Stiker \[([^\]]+)\] terkirim ke (.+)/);
@@ -1006,6 +1050,13 @@
         const res = await fetch('/api/contacts');
         const data = await res.json();
         currentContacts = data.contacts || {};
+
+        const manualSelect = document.getElementById('select-manual-contact');
+        if (manualSelect) {
+          manualSelect.innerHTML = `<option value="">Pilih dari daftar kontak...</option>` +
+            Object.entries(currentContacts).map(([phone, c]) =>
+              `<option value="${phone}">${(c.name || phone).replace(/</g, '&lt;')} (${phone})</option>`).join('');
+        }
 
         const tbody = document.getElementById('contacts-table-body');
         const phones = Object.keys(currentContacts);
