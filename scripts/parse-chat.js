@@ -83,6 +83,11 @@ for (const line of lines) {
 
 console.log(`Berhasil mengekstrak ${parsedMessages.length} baris pesan.`);
 
+function capitalizeFirstLetter(text) {
+  if (!text) return text;
+  return text.replace(/[\p{L}]/u, (ch) => ch.toUpperCase());
+}
+
 // Cari pasangan [Pesan Lawan Bicara] -> [Pesan Kamu]
 const pairs = [];
 for (let i = 0; i < parsedMessages.length - 1; i++) {
@@ -94,7 +99,7 @@ for (let i = 0; i < parsedMessages.length - 1; i++) {
     if (current.content.length > 3 && current.content.length < 150 && next.content.length > 1 && next.content.length < 200) {
       pairs.push({
         user: current.content.replace(/\n/g, ' ').trim(),
-        reply: next.content.replace(/\n/g, ' ').trim()
+        reply: capitalizeFirstLetter(next.content.replace(/\n/g, ' ').trim())
       });
     }
   }

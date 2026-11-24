@@ -17,6 +17,8 @@ data/contacts.json
 data/chat_memory.json
 data/settings.json
 data/knowledge_registry.json
+data/contact_jids.json
+data/ask-queue/
 data/raw_chats/*
 !data/raw_chats/.gitkeep
 data/knowledge/*
@@ -24,11 +26,14 @@ data/knowledge/*
 data/stickers/*
 !data/stickers/.gitkeep
 
-# Dokumen internal / session dump / logs
+# Dokumen internal / session dump / logs / runtime QR
 another-me.md
+whatsapp-qr.png
 *.log
 
 # OS specific files
 .DS_Store
 Thumbs.db
 desktop.ini
+*.md
+!README.md

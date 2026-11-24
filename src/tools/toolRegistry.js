@@ -7,20 +7,30 @@
 const fs = require('fs');
 const path = require('path');
 
+function decodeHtmlEntities(text) {
+  return String(text || '')
+    .replace(/<[^>]*>/g, '')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 class ToolRegistry {
   constructor(options = {}) {
     this.stickersDir = options.stickersDir || path.resolve(__dirname, '../../data/stickers');
     this.knowledgeManager = options.knowledgeManager || null;
     this.defaultCity = process.env.DEFAULT_CITY || 'Tasikmalaya';
     this.defaultTimezone = process.env.DEFAULT_TIMEZONE || 'Asia/Jakarta';
+    this.fetchTimeoutMs = options.fetchTimeoutMs ?? 8000;
 
     if (!fs.existsSync(this.stickersDir)) {
       fs.mkdirSync(this.stickersDir, { recursive: true });
     }
-  }
-
-  setKnowledgeManager(km) {
-    this.knowledgeManager = km;
   }
 
   /**
@@ -148,8 +158,15 @@ class ToolRegistry {
   }
 
   executeGetCurrentTime(args) {
-    const tz = args.timezone || this.defaultTimezone;
+    let tz = args.timezone || this.defaultTimezone;
     const now = new Date();
+
+    // Validasi zona waktu agar input salah dari LLM tidak melempar RangeError
+    try {
+      new Intl.DateTimeFormat('id-ID', { timeZone: tz });
+    } catch {
+      tz = this.defaultTimezone;
+    }
 
     const timeFormatter = new Intl.DateTimeFormat('id-ID', {
       timeZone: tz,
@@ -178,20 +195,19 @@ class ToolRegistry {
 
     return {
       success: true,
-      jam: `${hour}:${minute}`,
+      jam: `${String(hour).padStart(2, '0')}:${minute}`,
       tanggal: dateFormatter.format(now),
       waktu_fase: phase,
       zona_waktu: tz,
-      catatan_konteks: `Saat ini pukul ${hour}:${minute} WIB (${phase}). Gunakan konteks ini secara natural tanpa terdengar seperti robot membaca jam.`
+      catatan_konteks: `Saat ini pukul ${String(hour).padStart(2, '0')}:${minute} (${tz}, ${phase}). Gunakan konteks ini secara natural tanpa terdengar seperti robot membaca jam.`
     };
   }
 
   async executeGetWeather(args) {
     const city = args.city || this.defaultCity;
     try {
-      // 1. Geocoding nama kota via Open-Meteo Geocoding API
       const geoUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=id&format=json`;
-      const geoRes = await fetch(geoUrl);
+      const geoRes = await fetch(geoUrl, { signal: AbortSignal.timeout(this.fetchTimeoutMs) });
       if (!geoRes.ok) throw new Error('Gagal menghubungi service geocoding');
       const geoData = await geoRes.json();
 
@@ -206,9 +222,8 @@ class ToolRegistry {
       const loc = geoData.results[0];
       const { latitude, longitude, name: resolvedName } = loc;
 
-      // 2. Ambil cuaca real-time via Open-Meteo
       const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,relative_humidity_2m,apparent_temperature,is_day,precipitation,weather_code&timezone=auto`;
-      const wRes = await fetch(weatherUrl);
+      const wRes = await fetch(weatherUrl, { signal: AbortSignal.timeout(this.fetchTimeoutMs) });
       if (!wRes.ok) throw new Error('Gagal mengambil data prakiraan cuaca');
       const wData = await wRes.json();
 
@@ -237,7 +252,6 @@ class ToolRegistry {
   }
 
   mapWmoCode(code) {
-    // WMO Weather interpretation codes (WW)
     if (code === 0) return { kondisi: 'Cerah', hujan: false };
     if (code === 1 || code === 2) return { kondisi: 'Sebagian Berawan', hujan: false };
     if (code === 3) return { kondisi: 'Mendung Berawan', hujan: false };
@@ -249,18 +263,18 @@ class ToolRegistry {
     return { kondisi: 'Berawan', hujan: false };
   }
 
+  listWebpFiles() {
+    if (!fs.existsSync(this.stickersDir)) return [];
+    return fs.readdirSync(this.stickersDir).filter((f) => f.toLowerCase().endsWith('.webp'));
+  }
+
   executeGetAvailableStickers() {
     try {
-      const files = fs.readdirSync(this.stickersDir);
-      const stickers = files
-        .filter((f) => f.endsWith('.webp'))
-        .map((f) => {
-          const tag = path.basename(f, '.webp');
-          return {
-            tag,
-            fileName: f
-          };
-        });
+      const files = this.listWebpFiles();
+      const stickers = files.map((f) => {
+        const tag = f.replace(/\.webp$/i, '');
+        return { tag, fileName: f };
+      });
 
       return {
         success: true,
@@ -276,12 +290,19 @@ class ToolRegistry {
   }
 
   executeSendSticker(args, context = {}) {
-    const rawTag = (args.sticker_tag || '').trim().toLowerCase();
+    const rawTag = String(args.sticker_tag || '').trim().toLowerCase();
     const cleanTag = rawTag.replace(/\.webp$/i, '');
+    if (!cleanTag) {
+      return {
+        success: false,
+        pesan: 'Tag stiker kosong.',
+        tersedia: this.listWebpFiles().map((f) => f.replace(/\.webp$/i, ''))
+      };
+    }
 
-    const files = fs.existsSync(this.stickersDir) ? fs.readdirSync(this.stickersDir) : [];
+    const files = this.listWebpFiles();
     const matchedFile = files.find((f) => {
-      const name = path.basename(f, '.webp').toLowerCase();
+      const name = f.replace(/\.webp$/i, '').toLowerCase();
       return name === cleanTag || name.includes(cleanTag) || cleanTag.includes(name);
     });
 
@@ -289,25 +310,24 @@ class ToolRegistry {
       return {
         success: false,
         pesan: `Stiker dengan tag '${args.sticker_tag}' tidak ditemukan di koleksi lokal.`,
-        tersedia: files.map((f) => path.basename(f, '.webp'))
+        tersedia: files.map((f) => f.replace(/\.webp$/i, ''))
       };
     }
 
     const fullPath = path.join(this.stickersDir, matchedFile);
 
-    // Tandai action ini ke context agar ditindaklanjuti oleh Baileys socket
     if (context.actions) {
       context.actions.push({
         type: 'send_sticker',
         filePath: fullPath,
-        tag: cleanTag
+        tag: matchedFile.replace(/\.webp$/i, '')
       });
     }
 
     return {
       success: true,
       terkirim: true,
-      tag: cleanTag,
+      tag: matchedFile.replace(/\.webp$/i, ''),
       fileName: matchedFile,
       catatan_konteks: `Stiker '${matchedFile}' akan dikirim otomatis secara terpisah setelah balasan teksmu. Jangan menulis '[Mengirim Stiker: ...]' atau pengumuman stiker apa pun di teks balasanmu; cukup kirim teks balasan biasa.`
     };
@@ -318,102 +338,163 @@ class ToolRegistry {
       return { success: false, pesan: 'Knowledge Manager belum terhubung.' };
     }
 
-    const query = (args.query || '').toLowerCase().trim();
+    const query = String(args.query || '').trim();
     const category = context.category || 'default';
-    const allKnowledge = this.knowledgeManager.getInjectedKnowledge(category);
 
+    if (typeof this.knowledgeManager.searchKnowledge === 'function') {
+      const searched = this.knowledgeManager.searchKnowledge(query, category, 3);
+      if (!searched) {
+        return { success: false, pesan: 'Tidak ada dokumen di knowledge base.' };
+      }
+      return { success: true, hasil: searched };
+    }
+
+    const allKnowledge = this.knowledgeManager.getInjectedKnowledge(category);
     if (!allKnowledge) {
       return { success: false, pesan: 'Tidak ada dokumen di knowledge base.' };
     }
 
-    // Filter baris atau paragraf yang relevan dengan query
     const paragraphs = allKnowledge.split(/\n\n+/);
-    const matches = paragraphs.filter((p) => p.toLowerCase().includes(query));
-
+    const matches = paragraphs.filter((p) => p.toLowerCase().includes(query.toLowerCase()));
     if (matches.length > 0) {
-      return {
-        success: true,
-        hasil: matches.slice(0, 3).join('\n\n')
-      };
+      return { success: true, hasil: matches.slice(0, 3).join('\n\n') };
     }
 
-    // Jika tidak ada match langsung, kembalikan rangkuman ringkas dokumen yang ada
-    return {
-      success: true,
-      hasil: allKnowledge.slice(0, 1500)
-    };
+    return { success: true, hasil: allKnowledge.slice(0, 1500) };
   }
 
-  /**
-   * Eksekusi Web Search publik dengan arsitektur multi-engine resilience:
-   * 1. Wikipedia Search + Lead Extract (Ringkasan ensiklopedis akurat)
-   * 2. DuckDuckGo Instant Answer / DuckDuckGo HTML
-   */
-  async executeWebSearch(args) {
-    const rawQuery = (args.query || '').trim();
-    if (!rawQuery) return { success: false, pesan: 'Kata kunci pencarian kosong.' };
-
-    const results = [];
-
-    // Engine 1: Wikipedia Search & Article Summary (ID & EN)
-    try {
-      // 1a. Cari artikel relevan di id.wikipedia
-      const searchUrl = `https://id.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(rawQuery)}&format=json&utf8=1&srlimit=3`;
-      const searchRes = await fetch(searchUrl, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AnotherMeBot/1.0' }
-      });
-
-      if (searchRes.ok) {
-        const searchData = await searchRes.json();
-        const searchList = searchData.query?.search || [];
-
-        for (const item of searchList) {
-          const cleanSnippet = (item.snippet || '')
-            .replace(/<[^>]*>/g, '')
-            .replace(/&quot;/g, '"')
-            .replace(/&amp;/g, '&')
-            .trim();
-
-          if (cleanSnippet) {
-            results.push({
-              title: item.title,
-              snippet: cleanSnippet
-            });
-          }
-        }
+  async searchWikipedia(lang, rawQuery) {
+    const searchUrl = `https://${lang}.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(rawQuery)}&format=json&utf8=1&srlimit=3`;
+    const res = await fetch(searchUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AnotherMeBot/1.0' },
+      signal: AbortSignal.timeout(this.fetchTimeoutMs)
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    const list = data.query?.search || [];
+    const items = [];
+    for (const item of list) {
+      const cleanSnippet = decodeHtmlEntities(item.snippet || '');
+      if (cleanSnippet) {
+        items.push({ source: `Wikipedia (${lang})`, title: item.title, snippet: cleanSnippet });
       }
+    }
+    return items;
+  }
 
-      // Jika belum ada hasil di id.wikipedia, coba en.wikipedia
-      if (results.length === 0) {
-        const enSearchUrl = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(rawQuery)}&format=json&utf8=1&srlimit=3`;
-        const enRes = await fetch(enSearchUrl, {
-          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AnotherMeBot/1.0' }
-        });
-        if (enRes.ok) {
-          const enData = await enRes.json();
-          const enList = enData.query?.search || [];
-          for (const item of enList) {
-            const cleanSnippet = (item.snippet || '').replace(/<[^>]*>/g, '').trim();
-            if (cleanSnippet) {
-              results.push({
-                title: item.title,
-                snippet: cleanSnippet
+  async searchDuckDuckGo(rawQuery) {
+    const items = [];
+
+    // 1. DuckDuckGo Instant Answer JSON API
+    try {
+      const iaUrl = `https://api.duckduckgo.com/?q=${encodeURIComponent(rawQuery)}&format=json&no_html=1&skip_disambig=1`;
+      const iaRes = await fetch(iaUrl, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AnotherMeBot/1.0' },
+        signal: AbortSignal.timeout(this.fetchTimeoutMs)
+      });
+      if (iaRes.ok) {
+        const iaData = await iaRes.json();
+        if (iaData.AbstractText) {
+          items.push({
+            source: 'DuckDuckGo',
+            title: iaData.Heading || rawQuery,
+            snippet: decodeHtmlEntities(iaData.AbstractText)
+          });
+        }
+        if (iaData.Answer) {
+          items.push({
+            source: 'DuckDuckGo',
+            title: rawQuery,
+            snippet: decodeHtmlEntities(iaData.Answer)
+          });
+        }
+        if (items.length < 2 && Array.isArray(iaData.RelatedTopics)) {
+          for (const topic of iaData.RelatedTopics) {
+            if (items.length >= 3) break;
+            if (topic && typeof topic.Text === 'string' && topic.Text.trim()) {
+              items.push({
+                source: 'DuckDuckGo',
+                title: topic.FirstURL ? topic.Text.split(' - ')[0].slice(0, 60) : rawQuery,
+                snippet: decodeHtmlEntities(topic.Text)
               });
             }
           }
         }
       }
     } catch (err) {
-      console.warn('[WebSearch Warning]:', err.message);
+      console.warn('[WebSearch DDG IA Warning]:', err.message);
+    }
+
+    if (items.length >= 2) return items;
+
+    // 2. DuckDuckGo HTML Lite (untuk berita, skor, jadwal rilis, tempat terkini)
+    try {
+      const htmlUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(rawQuery)}`;
+      const htmlRes = await fetch(htmlUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+          'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7'
+        },
+        signal: AbortSignal.timeout(this.fetchTimeoutMs)
+      });
+      if (htmlRes.ok) {
+        const html = await htmlRes.text();
+        const titleMatches = [...html.matchAll(/class="result__a"[^>]*>([\s\S]*?)<\/a>/gi)];
+        const snippetMatches = [...html.matchAll(/class="result__snippet"[^>]*>([\s\S]*?)<\/(?:a|div|span)>/gi)];
+        const count = Math.min(3, titleMatches.length, snippetMatches.length);
+        for (let i = 0; i < count; i++) {
+          const title = decodeHtmlEntities(titleMatches[i][1]);
+          const snippet = decodeHtmlEntities(snippetMatches[i][1]);
+          if (title && snippet) {
+            items.push({ source: 'DuckDuckGo Web', title, snippet });
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[WebSearch DDG HTML Warning]:', err.message);
+    }
+
+    return items;
+  }
+
+  /**
+   * Eksekusi Web Search publik dengan arsitektur multi-engine:
+   * 1. DuckDuckGo (Instant Answer + Web HTML) untuk info web & berita terkini
+   * 2. Wikipedia (Bahasa Indonesia lalu Inggris) untuk fakta ensiklopedis
+   */
+  async executeWebSearch(args) {
+    const rawQuery = String(args.query || '').trim();
+    if (!rawQuery) return { success: false, pesan: 'Kata kunci pencarian kosong.' };
+
+    const results = [];
+
+    // Jalankan DuckDuckGo dan Wikipedia Indonesia paralel untuk kecepatan
+    const [ddgResults, wikiIdResults] = await Promise.all([
+      this.searchDuckDuckGo(rawQuery).catch(() => []),
+      this.searchWikipedia('id', rawQuery).catch(() => [])
+    ]);
+
+    results.push(...ddgResults.slice(0, 2));
+    results.push(...wikiIdResults.slice(0, 2));
+
+    // Jika masih kosong, fallback ke Wikipedia Bahasa Inggris
+    if (results.length === 0) {
+      try {
+        const wikiEnResults = await this.searchWikipedia('en', rawQuery);
+        results.push(...wikiEnResults.slice(0, 3));
+      } catch (err) {
+        console.warn('[WebSearch Wiki EN Warning]:', err.message);
+      }
     }
 
     if (results.length > 0) {
+      const top = results.slice(0, 4);
       return {
         success: true,
         query: rawQuery,
-        total_ditemukan: results.length,
-        hasil: results.map((r, i) => `${i + 1}. [${r.title}]: ${r.snippet}`).join('\n\n'),
-        catatan_konteks: `Informasi internet untuk "${rawQuery}":\n${results.map(r => `${r.title}: ${r.snippet}`).join(' ')}\nGunakan informasi faktual ini untuk menyusun balasan chat santai kamu.`
+        total_ditemukan: top.length,
+        hasil: top.map((r, i) => `${i + 1}. [${r.title} - ${r.source}]: ${r.snippet}`).join('\n\n'),
+        catatan_konteks: `Informasi internet untuk "${rawQuery}":\n${top.map((r) => `${r.title}: ${r.snippet}`).join(' ')}\nGunakan informasi faktual ini untuk menyusun balasan chat santai kamu.`
       };
     }
 

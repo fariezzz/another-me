@@ -1,36 +1,31 @@
 # Another Me - WhatsApp AI Auto-Reply & Digital Persona
 
-**Another Me** adalah agen asisten pribadi dan kembaran digital berbasis WhatsApp menggunakan **Baileys** dan **Universal OpenAI-Compatible LLM Client** (Ollama Cloud, Ollama Local, Groq, OpenRouter, OpenAI, DeepSeek, dsb).
+**Another Me** adalah bot balas otomatis WhatsApp dan persona digital pribadi berbasis Node.js, **Baileys**, Express 5, serta **Universal OpenAI-Compatible Large Language Model (LLM) Client** (termasuk jalur proksi lokal ke Google AI Studio dengan model `gemma-4-26b-a4b-it`).
 
-Bot ini mempelajari dan meniru gaya chatting WhatsApp kamu secara otentik berdasarkan segmentasi relasi kontak (Pacar, Teman Dekat, Formal/Dosen, Baru Kenal), dilengkapi basis pengetahuan faktual (Knowledge Base), kemampuan otonom (Agent Harness & Tools), deteksi dan pengiriman stiker WhatsApp, serta fitur simulasi mandiri (Training Room).
+Bot ini membalas pesan WhatsApp sesuai gaya ketik pemilik berdasarkan kategori relasi kontak (`pacar`, `teman_dekat`, `formal`, `baru_kenal`, `default`), dilengkapi basis pengetahuan (*Knowledge Base*) multi-format, enam alat (*tools*) otonom, dukungan stiker dua arah, antrean *burst* anti-spam, perintah instan `!acep` dan `!ask`, serta dasbor web *offline* yang responsif.
 
 ---
 
 ## Fitur Utama
 
-- **Universal LLM & Dual-Model Vision:** Mendukung semua model OpenAI-compatible. Dapat menggunakan model teks cerdas untuk obrolan serta model vision terpisah untuk menganalisis stiker visual.
-- **Agent Harness (Function Calling Tools):**
-  - `get_current_time`: Mengetahui jam, tanggal, dan fase waktu (pagi/siang/sore/malam) di zona waktu lokal (WIB).
-  - `get_weather`: Mengecek prakiraan cuaca, suhu, dan hujan real-time (Open-Meteo API).
-  - `web_search`: Pencarian web dan fakta terbaru tanpa limit API key.
-  - `send_sticker`: Memilih dan mengirimkan stiker WhatsApp dari koleksi lokal sesuai mood obrolan.
-  - `query_knowledge`: Memeriksa informasi spesifik dari dokumen knowledge base.
-- **Dukungan Stiker WhatsApp Dua Arah:**
-  - Menerima & menginterpretasi ekspresi stiker masuk melalui model multimodal vision.
-  - Mengirim stiker format `.webp` secara otonom saat percakapan relevan.
-- **Pengiriman Multi-Chat Alami (Multi-Bubble Burst):** AI dapat memecah balasan menjadi 2–3 balon chat pendek beruntun dengan simulasi status "sedang mengetik..." realistis (1.5–2.8 detik).
-- **Knowledge Base Multi-Format:** Ekstraksi dokumen `.pdf`, `.docx`, `.md`, `.txt`, `.json`, `.csv`, dan catatan teks faktual ke dalam memori AI.
-- **Kustom Persona & Few-Shot Learning:** Aturan gaya ketik santai khas Indonesia (tanpa titik, huruf kecil wajar, kosakata khas relasi) dan contoh chat asli.
-- **Training Room (Sandbox & Evaluasi Reflektif):**
-  - Menguji percakapan secara simulasi tanpa terkirim ke WhatsApp.
-  - Berikan jawaban sempurnamu, AI akan melakukan interpretasi reflektif (*"Ohhh, jadi jawabannya harusnya begitu!"*).
-  - Serap hasil evaluasi langsung ke Knowledge Base atau Few-Shot Persona dalam 1 klik.
-- **Web Dashboard Kontrol (Clean Light Mode):**
-  - Master switch `Service: ON / OFF`.
-  - Toggle Whitelist & Balas Pesan Grup.
-  - Kelola kontak, izin AI per-nomor, dan ganti endpoint LLM secara live.
-  - Inspeksi riwayat chat real-time, metadata sender, dan tombol hapus histori.
-  - Pengaturan tersimpan permanen (`data/settings.json`).
+- **Universal LLM & Dual-Model Vision**: Mendukung endpoint OpenAI-compatible (termasuk proksi lokal port 4000 tanpa menyimpan kunci Application Programming Interface (API) di proses bot), lengkap dengan *retry* galat sementara (`429/500/502/503/504`), dukungan header `Retry-After`, batas waktu `AbortSignal.timeout`, dan *cache* kesehatan endpoint.
+- **Agent Harness (6 Function Calling Tools)**:
+  - `get_current_time`: Jam, tanggal, dan fase waktu lokal (`Asia/Jakarta`).
+  - `get_weather`: Prakiraan cuaca *real-time* via Open-Meteo.
+  - `web_search`: Pencarian web multi-mesin (DuckDuckGo + Wikipedia bahasa Indonesia dan Inggris).
+  - `get_available_stickers` & `send_sticker`: Daftar dan kirim stiker `.webp` otomatis (termasuk penanganan *pseudo-call* teks Gemma).
+  - `query_knowledge`: Pencarian berbobot kata kunci dari basis pengetahuan pribadi.
+- **Aturan Perilaku Chat Alami**:
+  - **Anti-Spam Burst**: Pesan beruntun dari satu pengirim ditampung selama `BURST_WINDOW_MS` (default 4.000 milidetik) dan dibalas sekali fokus pada pesan terakhir.
+  - **Maksimal 2 Balon & Huruf Kapital Awal**: Balasan bot dibatasi maksimal 2 balon (kelebihan digabung ke balon kedua tanpa membuang isi) dan setiap balon diawali huruf kapital. Pengiriman manual pemilik lewat dasbor tidak dibatasi 2 balon.
+  - **Centang Biru Cerdas**: Pesan ditandai terbaca (*read receipt*) hanya ketika balasan siap dikirim agar pesan gagal tidak tampak diabaikan.
+- **Perintah Instan WhatsApp (Khusus Kontak Terdaftar)**:
+  - `!acep` / `!acep on` / `!acep off` / `!acep status`: Menyalakan atau mematikan AI khusus kontak pengirim (tidak mengubah sakelar layanan global).
+  - `!ask <pertanyaan>` (alias `!tanya`): Menuliskan pertanyaan ke antrean berkas `data/ask-queue/<id>.json` untuk ditangani hook asisten eksternal, disertai pemantau antrean tertahan di dasbor.
+- **Dukungan Linked Identity (`@lid`)**: Merekam Jabber Identifier (JID) asli pengirim di `data/contact_jids.json` (termasuk pemetaan alias Baileys v7) dan mendukung pengiriman aman lewat `/api/send-to-contact`.
+- **Knowledge Base Multi-Format**: Ekstraksi `.pdf`, `.docx`, `.md`, `.txt`, `.json`, `.csv`, catatan langsung (*snippet*), *cache* memori selektif hemat token, serta fitur lihat & edit isi dokumen dari dasbor.
+- **Training Room (Sandbox & Evaluasi Reflektif)**: Menggunakan perakit prompt yang identik dengan WhatsApp sungguhan, tanpa pernah mengirim pesan ke WhatsApp, dilengkapi interpretasi koreksi otomatis dan simpan 1 klik ke *Few-Shot* atau *Knowledge Base*.
+- **Dasbor Web Offline & Aman**: Antarmuka *Light Mode* tanpa Content Delivery Network (CDN) eksternal, kode Quick Response (QR) SVG lokal + dukungan Kode Pairing 8 digit, perlindungan *Cross-Site Scripting* (XSS), editor *Few-Shot* visual, dan tampilan kartu responsif di ponsel.
 
 ---
 
@@ -38,32 +33,44 @@ Bot ini mempelajari dan meniru gaya chatting WhatsApp kamu secara otentik berdas
 
 ```text
 another-me/
-├── index.js                  # Server utama Baileys + Express API & Dashboard
+├── index.js                         # Titik masuk server Express, CORS ketat, & graceful shutdown
 ├── package.json
-├── .env                      # Konfigurasi LLM, port, dan lokasi default
+├── .env                             # Konfigurasi lokal (gitignored, jangan pernah di-commit)
 ├── .env.example
 ├── .gitignore
 ├── public/
-│   └── index.html            # Web Dashboard (Light Mode UI)
+│   ├── index.html                   # Dasbor web offline (XSS-safe & responsif ponsel)
+│   └── styles.css                   # Stylesheet lokal tanpa CDN eksternal
 ├── src/
-│   ├── llmClient.js          # Universal OpenAI-compatible LLM & Agent Harness Loop
-│   ├── contextManager.js     # Profil kontak, memory riwayat chat, dan perakit prompt
-│   ├── knowledgeManager.js   # Parser & pengelola knowledge base multi-format
+│   ├── llmClient.js                 # Klien LLM, agent loop, retry, timeout, pembersih respons
+│   ├── contextManager.js            # Kontak, JID @lid, memori chat, & perakit prompt tunggal
+│   ├── knowledgeManager.js          # Ekstraksi dokumen, cache memori, & pencarian relevansi
+│   ├── settingsStore.js             # Persistensi atomik data/settings.json
+│   ├── ollamaClient.js              # Klien Ollama legacy (tidak dipakai jalur utama)
+│   ├── utils/
+│   │   └── atomicFile.js            # Penulisan JSON atomik, validasi WebP, & render QR SVG lokal
+│   ├── whatsapp/
+│   │   ├── baileysService.js        # Siklus hidup Baileys, backoff reconnect, & antrean burst
+│   │   └── commandRouter.js         # Parser !acep, !ask, serta pemantau/pembersih ask-queue
+│   ├── routes/
+│   │   └── apiRoutes.js             # Seluruh endpoint HTTP /api/*
 │   └── tools/
-│       └── toolRegistry.js   # Registri & eksekutor tools (waktu, cuaca, web search, stiker)
+│       └── toolRegistry.js          # 6 tools otonom (waktu, cuaca, DuckDuckGo+Wiki, stiker, KB)
+├── test/                            # Rangkaian uji otomatis berbasis node:test bawaan Node.js
 ├── data/
-│   ├── contacts.json         # Buku kontak WhatsApp dan izin balas AI
-│   ├── persona.json          # Definisi gaya bicara & few-shot pairs per kategori
-│   ├── settings.json         # Persistensi status switch & filter bot
-│   ├── stickers/             # Koleksi berkas stiker .webp
-│   ├── knowledge/            # Teks hasil ekstraksi knowledge base
-│   └── knowledge_registry.json
+│   ├── persona.json                 # Identitas persona, aturan ketik, & few-shot per kategori
+│   ├── contacts.example.json        # Templat daftar kontak
+│   ├── settings.example.json        # Templat pengaturan layanan
+│   ├── knowledge_registry.example.json
+│   ├── stickers/                    # Koleksi berkas stiker .webp (gitignored)
+│   ├── knowledge/                   # Teks hasil ekstraksi knowledge base (gitignored)
+│   └── raw_chats/                   # Ekspor chat WhatsApp mentah (gitignored)
 ├── scripts/
-│   ├── parse-chat.js         # Parser file ekspor chat WhatsApp (.txt)
-│   ├── create-shortcut.ps1   # Generator shortcut Start di Desktop
-│   └── create-restart-shortcut.ps1 # Generator shortcut Restart di Desktop
-├── start-another-me.bat      # Script batch start service + auto open browser
-└── restart-another-me.bat    # Script batch restart paksa service port 3000
+│   ├── parse-chat.js                # Parser ekspor chat WhatsApp (.txt) ke persona.json
+│   ├── create-shortcut.ps1          # Pembuat shortcut Start di Desktop Windows (path dinamis)
+│   └── create-restart-shortcut.ps1  # Pembuat shortcut Restart di Desktop Windows (path dinamis)
+├── start-another-me.bat             # Skrip start Windows portabel
+└── restart-another-me.bat           # Skrip restart Windows portabel (berbasis PID port 3000)
 ```
 
 ---
@@ -76,41 +83,36 @@ npm install
 ```
 
 ### 2. Konfigurasi Environment (`.env`)
-Salin berkas `.env.example` menjadi `.env` dan sesuaikan nilainya:
+Salin `.env.example` menjadi `.env` lalu sesuaikan nilainya (untuk jalur proksi lokal pada Muse Virtual Machine (VM), biarkan `LLM_API_KEY=` kosong karena kunci API disuntikkan oleh proksi):
 ```env
-LLM_BASE_URL=https://ollama.com/v1
-LLM_MODEL=gemma4
-LLM_API_KEY=your_api_key_here
-
-# Opsional: model vision khusus stiker (jika LLM_MODEL adalah text-only)
-VISION_MODEL=
-
+LLM_BASE_URL=http://127.0.0.1:4000/v1beta/openai
+LLM_MODEL=gemma-4-26b-a4b-it
+LLM_API_KEY=
+VISION_MODEL=gemma-4-26b-a4b-it
+HOST=127.0.0.1
 PORT=3000
-DEFAULT_CITY=Tasikmalaya
-DEFAULT_TIMEZONE=Asia/Jakarta
+BURST_WINDOW_MS=4000
 ```
 
-### 3. Menjalankan Service
-Kamu bisa menggunakan salah satu cara berikut:
-- **Via Terminal:**
+### 3. Menjalankan Pengujian & Verifikasi Sintaks
+```bash
+node --check index.js
+npm test
+```
+
+### 4. Menjalankan Layanan
+- **Terminal (Linux / Muse VM / Windows)**:
   ```bash
   npm start
   ```
-- **Via Shortcut Desktop (Windows):**
-  Klik dua kali shortcut **`Another Me`** di Desktop (service berjalan dan dashboard web terbuka otomatis di browser).
+- **Windows Desktop**: Jalankan `start-another-me.bat` atau buat shortcut dengan `scripts/create-shortcut.ps1`.
+- **Verifikasi Kesehatan**:
+  ```bash
+  curl -s http://127.0.0.1:3000/api/status
+  ```
+  Pastikan `whatsapp.status` bernilai `"connected"` dan `llm.connected` bernilai `true`.
 
-### 4. Tautkan Akun WhatsApp
-1. Buka browser di `http://localhost:3000`.
-2. Jika sesi belum tertaut, QR Code akan muncul di layar dashboard (dan di terminal).
-3. Buka WhatsApp di HP > **Perangkat Tertaut (Linked Devices) > Tautkan Perangkat**, lalu scan QR Code.
-4. Sesi akan disimpan di folder `auth_info_baileys/` secara permanen.
-
----
-
-## Deployment ke Cloud (Enzonic / VPS)
-
-Proyek ini siap di-deploy ke platform container always-on 24/7 seperti **Enzonic Cloud** atau VPS:
-1. Hubungkan repository GitHub privat ke Enzonic.
-2. Atur Environment Variables (`LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY`, dsb) di panel startup Enzonic.
-3. Buka console panel Enzonic untuk scan QR Code pertama kali.
-4. Dashboard web dapat diakses via subdomain publik ber-SSL bawaan Enzonic.
+### 5. Menautkan Akun WhatsApp
+1. Buka dasbor di `http://127.0.0.1:3000` (atau domain Cloudflare Access milikmu).
+2. Pindai kode QR pada kartu **Koneksi WhatsApp**, atau gunakan opsi **Kode Pairing 8 Digit** langsung dari kartu yang sama.
+3. Sesi tersimpan di `auth_info_baileys/` (jangan pernah dibagikan atau di-commit ke Git).
