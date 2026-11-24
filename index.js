@@ -6,6 +6,7 @@
 
 require('dotenv').config();
 const path = require('path');
+const crypto = require('crypto');
 const express = require('express');
 const cors = require('cors');
 
@@ -34,6 +35,75 @@ function buildAllowedOrigins(port) {
     .map((s) => s.trim())
     .filter(Boolean);
   return new Set([...defaults, ...extras]);
+}
+
+function safeTokenEquals(provided, expected) {
+  const a = Buffer.from(String(provided || ''), 'utf-8');
+  const b = Buffer.from(String(expected || ''), 'utf-8');
+  if (a.length === 0 || a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
+/**
+ * Middleware autentikasi token opsional yang aman di belakang Cloudflare Tunnel.
+ * Lalu lintas dari cloudflared masuk lewat 127.0.0.1 tetapi membawa header proksi/Cloudflare
+ * (cf-connecting-ip / cf-ray / x-forwarded-for / cf-access-jwt-assertion) sehingga tidak
+ * pernah dianggap sebagai loopback lokal murni (SEC-01).
+ */
+function createDashboardAuthMiddleware() {
+  return (req, res, next) => {
+    const requiredToken = (process.env.DASHBOARD_API_TOKEN || '').trim();
+    if (!requiredToken) return next();
+
+    const remoteAddr = req.ip || req.socket?.remoteAddress || '';
+    const isLoopback =
+      remoteAddr === '127.0.0.1' ||
+      remoteAddr === '::1' ||
+      remoteAddr === '::ffff:127.0.0.1';
+    const hasProxyForwardHeaders = Boolean(
+      req.headers['cf-connecting-ip'] ||
+        req.headers['cf-ray'] ||
+        req.headers['cf-access-jwt-assertion'] ||
+        req.headers['x-forwarded-for']
+    );
+
+    if (isLoopback && !hasProxyForwardHeaders && process.env.ALLOW_LOCAL_NO_AUTH !== 'false') {
+      return next();
+    }
+
+    const authHeader = String(req.headers.authorization || '');
+    const bearerToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
+    const headerToken = String(req.headers['x-dashboard-token'] || '').trim();
+    if (safeTokenEquals(bearerToken, requiredToken) || safeTokenEquals(headerToken, requiredToken)) {
+      return next();
+    }
+
+    return res.status(401).json({ success: false, error: 'Autentikasi API diperlukan.' });
+  };
+}
+
+/**
+ * Middleware anti-CSRF untuk seluruh endpoint mutasi (/api POST/PUT/PATCH/DELETE).
+ * Menolak permintaan lintas situs dari peramban (termasuk simple POST & multipart/form-data)
+ * meskipun dikirim otomatis dengan kuki Cloudflare Access (SEC-02).
+ */
+function createCsrfProtectionMiddleware(allowedOrigins) {
+  const mutatingMethods = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+  return (req, res, next) => {
+    if (!mutatingMethods.has(req.method)) return next();
+
+    const secFetchSite = String(req.headers['sec-fetch-site'] || '').toLowerCase();
+    if (secFetchSite === 'cross-site') {
+      return res.status(403).json({ success: false, error: 'Permintaan lintas situs ditolak (proteksi CSRF).' });
+    }
+
+    const origin = req.headers.origin ? String(req.headers.origin).trim() : '';
+    if (origin && !allowedOrigins.has(origin)) {
+      return res.status(403).json({ success: false, error: 'Origin permintaan tidak diizinkan (proteksi CSRF).' });
+    }
+
+    return next();
+  };
 }
 
 function createServerApp(deps = {}) {
@@ -79,12 +149,18 @@ function createServerApp(deps = {}) {
 
   const app = express();
   const allowedOrigins = buildAllowedOrigins(deps.port || PORT);
+  const dashboardAuth = createDashboardAuthMiddleware();
+  const csrfProtection = createCsrfProtectionMiddleware(allowedOrigins);
 
-  // Header keamanan dasar
+  // Header keamanan dasar & Content Security Policy (CSP)
   app.use((req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'DENY');
     res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader(
+      'Content-Security-Policy',
+      "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+    );
     next();
   });
 
@@ -102,10 +178,12 @@ function createServerApp(deps = {}) {
 
   app.use(express.json({ limit: '1mb' }));
   app.use(express.static(path.resolve(__dirname, 'public')));
-  app.use('/stickers', express.static(toolRegistry.stickersDir));
+  app.use('/stickers', dashboardAuth, express.static(toolRegistry.stickersDir));
 
   app.use(
     '/api',
+    csrfProtection,
+    dashboardAuth,
     createApiRouter({
       llm,
       contextManager,

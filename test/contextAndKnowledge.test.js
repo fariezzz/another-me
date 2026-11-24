@@ -134,6 +134,54 @@ test('KnowledgeManager supports cache, updateDocument, keyword search, and relev
     assert.ok(injected.includes('Jadwal Kuliah Terbaru'));
     assert.ok(injected.includes('DOKUMEN PENGETAHUAN LAINNYA') || injected.includes('pakai query_knowledge'));
     assert.ok(doc2.id);
+
+    // DATA-02: unknown/group callers with allowUniversal: false cannot see 'all' personal docs,
+    // and unmatched searchKnowledge returns empty string instead of dumping random docs
+    const noUniversal = km.getInjectedKnowledge('default', 'jadwal kuliah', { allowUniversal: false });
+    assert.equal(noUniversal, '');
+    const unmatched = km.searchKnowledge('kata_kunci_mustahil_xyz999', 'teman_dekat');
+    assert.equal(unmatched, '');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('ContextManager protects formal category from casual sticker prompts, prioritizes exact name match, and isolates group history', () => {
+  const dir = makeTempDataDir();
+  try {
+    const persona = JSON.parse(fs.readFileSync(path.join(dir, 'persona.json'), 'utf-8'));
+    persona.categories.formal = {
+      tone: 'Sopan dan profesional',
+      vocabulary: ['Selamat pagi Bapak/Ibu'],
+      guidelines: 'Gunakan bahasa formal.',
+      few_shots: []
+    };
+    fs.writeFileSync(path.join(dir, 'persona.json'), JSON.stringify(persona), 'utf-8');
+
+    const cm = new ContextManager({ dataPath: dir });
+    cm.upsertContact('628111111111', { name: 'Dosen Pembimbing', category: 'formal', enabled: true });
+    cm.upsertContact('628222222222', { name: 'Kak Kiraya', category: 'teman_dekat', enabled: true });
+    cm.upsertContact('628333333333', { name: 'Kiraya', category: 'teman_dekat', enabled: true });
+
+    // PROMPT-01 & PROMPT-02: formal suppresses expressive sticker push & includes local time baseline
+    const formalMsgs = cm.buildPromptMessages('628111111111@s.whatsapp.net', 'Selamat pagi');
+    assert.ok(formalMsgs[0].content.includes('ATURAN KHUSUS KATEGORI FORMAL'));
+    assert.ok(!formalMsgs[0].content.includes('KEBIASAAN PENGIRIMAN STIKER'));
+    assert.ok(formalMsgs[0].content.includes('Waktu Lokal Saat Ini:'));
+
+    // BUG-06: exact contact name beats earlier substring match, and toggleContactStatus returns null for unknown
+    const found = cm.findContactByQuery('Kiraya');
+    assert.equal(found.phone, '628333333333');
+    assert.equal(cm.toggleContactStatus('628999999999'), null);
+
+    // BUG-03: recordContactJid ignores bare digits without @ domain
+    cm.recordContactJid('1234567890', '628111111111');
+    assert.equal(cm.getStoredJid('1234567890'), null);
+
+    // BUG-02: group memory key stays isolated from 1-on-1 personal contact history
+    cm.addMessage('group:120363999', 'user', 'Halo grup');
+    assert.equal(cm.getHistory('group:120363999').length, 1);
+    assert.equal(cm.getHistory('628333333333').length, 0);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

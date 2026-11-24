@@ -11,6 +11,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { atomicWriteJsonSync } = require('../src/utils/atomicFile');
 
 function parseArgs() {
   const args = {};
@@ -139,5 +140,5 @@ for (const p of selectedPairs) {
   }
 }
 
-fs.writeFileSync(personaPath, JSON.stringify(personaData, null, 2), 'utf-8');
+atomicWriteJsonSync(personaPath, personaData);
 console.log(`✅ Berhasil menambahkan ${addedCount} contoh chat baru ke kategori '${targetCategory}' di data/persona.json`);

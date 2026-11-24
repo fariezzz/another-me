@@ -961,8 +961,42 @@
     let currentStickers = [];
 
     let selectedChatPhone = null;
+    let selectedChatLastTimestamp = null;
     let selectedManualContact = '';
     let activeTab = 'dashboard';
+    let dashboardTokenPromptOpen = false;
+
+    // Pembungkus fetch agar token opsional (DASHBOARD_API_TOKEN) otomatis dikirim saat diset (SEC-01)
+    const nativeFetch = window.fetch.bind(window);
+    window.fetch = async function patchedDashboardFetch(input, init = {}) {
+      const urlStr = typeof input === 'string' ? input : input?.url || '';
+      const isApiCall = urlStr.startsWith('/api/') || urlStr.startsWith('/stickers/');
+      const savedToken = sessionStorage.getItem('another_me_api_token') || '';
+      const nextInit = { ...init };
+      if (isApiCall && savedToken) {
+        const headers = new Headers(init.headers || {});
+        if (!headers.has('X-Dashboard-Token') && !headers.has('Authorization')) {
+          headers.set('X-Dashboard-Token', savedToken);
+        }
+        nextInit.headers = headers;
+      }
+      const res = await nativeFetch(input, nextInit);
+      if (isApiCall && res.status === 401 && !dashboardTokenPromptOpen) {
+        dashboardTokenPromptOpen = true;
+        try {
+          const entered = window.prompt('Endpoint API memerlukan DASHBOARD_API_TOKEN. Masukkan token akses:');
+          if (entered && entered.trim()) {
+            sessionStorage.setItem('another_me_api_token', entered.trim());
+            const retryHeaders = new Headers(nextInit.headers || {});
+            retryHeaders.set('X-Dashboard-Token', entered.trim());
+            return await nativeFetch(input, { ...nextInit, headers: retryHeaders });
+          }
+        } finally {
+          dashboardTokenPromptOpen = false;
+        }
+      }
+      return res;
+    };
 
     let contactSearch = '';
     let contactCategoryFilter = 'all';
@@ -1451,15 +1485,24 @@
     async function loadConversations() {
       try {
         const res = await fetch('/api/conversations');
+        if (!res.ok) return;
         const data = await res.json();
         currentConversations = data.conversations || [];
         renderConversationsList();
+        // Segarkan ruang percakapan yang sedang dibuka bila ada pesan baru masuk (UI-01)
+        if (selectedChatPhone) {
+          const activeConv = currentConversations.find((c) => c.phone === selectedChatPhone);
+          const latestTs = activeConv?.lastMessage?.timestamp || null;
+          if (latestTs && latestTs !== selectedChatLastTimestamp) {
+            inspectChat(selectedChatPhone, activeConv.name, activeConv.category, { silent: true });
+          }
+        }
       } catch (err) {
         console.error('Error load conversations:', err);
       }
     }
 
-    async function inspectChat(phone, name, category = null) {
+    async function inspectChat(phone, name, category = null, options = {}) {
       selectedChatPhone = phone;
       const contact = currentContacts[phone];
       const displayName = name || contact?.name || phone;
@@ -1474,12 +1517,14 @@
       badge.className = 'pill';
 
       document.getElementById('btn-clear-chat').classList.remove('hidden');
-      renderConversationsList();
+      if (!options.silent) renderConversationsList();
 
       try {
         const res = await fetch(`/api/history/${encodeURIComponent(phone)}`);
+        if (!res.ok) return;
         const data = await res.json();
         const history = data.history || [];
+        selectedChatLastTimestamp = history.length > 0 ? history[history.length - 1]?.timestamp || null : null;
         const box = document.getElementById('chat-messages-container');
 
         if (history.length === 0) {
@@ -1825,7 +1870,7 @@
 
       const docs = currentKnowledge.filter((doc) => {
         const cat = doc.category || 'all';
-        if (knowledgeCategoryFilter !== '__all__' && knowledgeCategoryFilter !== 'all_filter' && cat !== knowledgeCategoryFilter) return false;
+        if (knowledgeCategoryFilter !== '__all__' && cat !== knowledgeCategoryFilter) return false;
         if (!q) return true;
         return (
           String(doc.title || '').toLowerCase().includes(q) ||
@@ -2284,12 +2329,22 @@
     });
 
     document.getElementById('btn-toggle-whitelist').addEventListener('click', async () => {
-      await fetch('/api/settings/toggle-whitelist', { method: 'POST' });
-      fetchStatus();
+      try {
+        const res = await fetch('/api/settings/toggle-whitelist', { method: 'POST' });
+        if (!res.ok) throw new Error('Gagal mengubah mode whitelist');
+        fetchStatus();
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
     });
     document.getElementById('btn-toggle-groups').addEventListener('click', async () => {
-      await fetch('/api/settings/toggle-groups', { method: 'POST' });
-      fetchStatus();
+      try {
+        const res = await fetch('/api/settings/toggle-groups', { method: 'POST' });
+        if (!res.ok) throw new Error('Gagal mengubah izin balas grup');
+        fetchStatus();
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
     });
 
     // Search & Filter Listeners
@@ -2425,8 +2480,13 @@
       if (!btn) return;
       const { action, phone } = btn.dataset;
       if (action === 'toggle-contact') {
-        await fetch(`/api/contacts/${encodeURIComponent(phone)}/toggle`, { method: 'POST' });
-        loadContacts();
+        try {
+          const res = await fetch(`/api/contacts/${encodeURIComponent(phone)}/toggle`, { method: 'POST' });
+          if (!res.ok) throw new Error('Gagal mengubah status AI kontak');
+          loadContacts();
+        } catch (err) {
+          showToast(err.message, 'error');
+        }
       } else if (action === 'inspect-chat') {
         const c = currentContacts[phone] || {};
         inspectChat(phone, c.name || phone, c.category || 'default');
@@ -2609,8 +2669,13 @@
       if (!btn) return;
       const { action, id } = btn.dataset;
       if (action === 'toggle-knowledge') {
-        await fetch(`/api/knowledge/${encodeURIComponent(id)}/toggle`, { method: 'POST' });
-        loadKnowledgeData();
+        try {
+          const res = await fetch(`/api/knowledge/${encodeURIComponent(id)}/toggle`, { method: 'POST' });
+          if (!res.ok) throw new Error('Gagal mengubah status dokumen');
+          loadKnowledgeData();
+        } catch (err) {
+          showToast(err.message, 'error');
+        }
       } else if (action === 'edit-knowledge') {
         openKnowledgeEditModal(id);
       } else if (action === 'delete-knowledge') {

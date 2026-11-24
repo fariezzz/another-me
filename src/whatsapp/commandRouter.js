@@ -122,6 +122,8 @@ class AskQueueMonitor {
       return summary;
     }
 
+    const seenPendingIds = new Set();
+
     for (const file of files) {
       const fullPath = path.join(this.queueDir, file);
       const res = readJsonSafeSync(fullPath);
@@ -132,17 +134,18 @@ class AskQueueMonitor {
       const ageMs = Math.max(0, nowMs - askedAtMs);
 
       if (entry.status === 'pending') {
+        const key = entry.id || file;
+        seenPendingIds.add(key);
         summary.pendingCount++;
         if (ageMs >= this.staleMs) {
           summary.stalePendingCount++;
           const ageMinutes = Math.floor(ageMs / 60000);
           summary.staleItems.push({
-            id: entry.id || file,
+            id: key,
             name: entry.name || entry.phone || '-',
             question: String(entry.question || '').slice(0, 80),
             ageMinutes
           });
-          const key = entry.id || file;
           if (!this.warnedIds.has(key)) {
             this.warnedIds.add(key);
             this.addLog(
@@ -161,6 +164,13 @@ class AskQueueMonitor {
           } catch {}
         }
         if (entry.id) this.warnedIds.delete(entry.id);
+      }
+    }
+
+    // Bersihkan warnedIds dari berkas antrean yang sudah dihapus manual di disk (MEM-01)
+    for (const oldKey of Array.from(this.warnedIds)) {
+      if (!seenPendingIds.has(oldKey)) {
+        this.warnedIds.delete(oldKey);
       }
     }
 
@@ -192,10 +202,12 @@ class AskQueueMonitor {
  */
 async function handleInstantCommands({
   waSocket,
+  sendTrackedMessage,
   remoteJid,
   senderPhone,
   senderPushName,
   profile,
+  fromMe = false,
   messageText,
   msg,
   contextManager,
@@ -203,6 +215,15 @@ async function handleInstantCommands({
   addLog
 }) {
   if (!profile.isKnown) return false;
+
+  const sendSafe = async (payload, options = {}) => {
+    if (typeof sendTrackedMessage === 'function') {
+      return await sendTrackedMessage(remoteJid, payload, options);
+    }
+    return await waSocket.sendMessage(remoteJid, payload, options);
+  };
+
+  const actorTag = fromMe ? `Pemilik -> ${profile.name}` : profile.name;
 
   // 1. Command !ask / !tanya (Muse-only, tanpa fallback Gemma)
   const askParsed = parseAskCommand(messageText);
@@ -213,19 +234,25 @@ async function handleInstantCommands({
         pushName: senderPushName,
         phone: senderPhone,
         category: profile.category,
-        command: '!ask'
+        command: '!ask',
+        initiatedByOwner: fromMe
       });
-      await waSocket.sendMessage(remoteJid, { text: ASK_USAGE_REPLY });
+      await sendSafe({ text: ASK_USAGE_REPLY });
       contextManager.addMessage(senderPhone, 'assistant', ASK_USAGE_REPLY, { command: '!ask' });
       return true;
     }
 
-    await waSocket.readMessages([msg.key]);
+    if (!fromMe && waSocket && typeof waSocket.readMessages === 'function') {
+      try {
+        await waSocket.readMessages([msg.key]);
+      } catch {}
+    }
     contextManager.addMessage(senderPhone, 'user', `!ask ${askParsed.question}`, {
       senderName: profile.name,
       phone: senderPhone,
       category: profile.category,
-      command: '!ask'
+      command: '!ask',
+      initiatedByOwner: fromMe
     });
 
     let queueEntry;
@@ -237,18 +264,19 @@ async function handleInstantCommands({
         question: askParsed.question
       });
     } catch (qErr) {
-      addLog('error', `Gagal menyimpan antrean !ask dari ${profile.name}: ${qErr.message}`);
-      await waSocket.sendMessage(remoteJid, { text: ASK_FAIL_REPLY }, { quoted: msg });
+      addLog('error', `Gagal menyimpan antrean !ask dari ${actorTag}: ${qErr.message}`);
+      await sendSafe({ text: ASK_FAIL_REPLY }, { quoted: msg });
       contextManager.addMessage(senderPhone, 'assistant', ASK_FAIL_REPLY, { command: '!ask' });
       return true;
     }
 
-    await waSocket.sendMessage(remoteJid, { text: ASK_ACK_REPLY }, { quoted: msg });
+    await sendSafe({ text: ASK_ACK_REPLY }, { quoted: msg });
     contextManager.addMessage(senderPhone, 'assistant', ASK_ACK_REPLY, { command: '!ask' });
-    addLog('ask', `!ask dari ${profile.name} masuk antrean (${queueEntry.id}): "${askParsed.question}"`, {
+    addLog('ask', `!ask dari ${actorTag} masuk antrean (${queueEntry.id}): "${askParsed.question}"`, {
       sender: profile.name,
       question: askParsed.question,
-      askId: queueEntry.id
+      askId: queueEntry.id,
+      initiatedByOwner: fromMe
     });
     return true;
   }
@@ -261,7 +289,7 @@ async function handleInstantCommands({
       if (updated !== null) {
         addLog(
           'acep',
-          `Status AI ${profile.name} diubah lewat command !acep menjadi: ${updated ? 'ON' : 'OFF'} (service global tidak diubah).`
+          `Status AI ${profile.name} diubah lewat command !acep (${fromMe ? 'oleh pemilik' : 'oleh kontak'}) menjadi: ${updated ? 'ON' : 'OFF'} (service global tidak diubah).`
         );
       }
     }
@@ -271,9 +299,10 @@ async function handleInstantCommands({
       pushName: senderPushName,
       phone: senderPhone,
       category: profile.category,
-      command: '!acep'
+      command: '!acep',
+      initiatedByOwner: fromMe
     });
-    await waSocket.sendMessage(remoteJid, { text: acepParsed.reply });
+    await sendSafe({ text: acepParsed.reply });
     contextManager.addMessage(senderPhone, 'assistant', acepParsed.reply, { command: '!acep' });
     return true;
   }

@@ -39,7 +39,32 @@ class KnowledgeManager {
 
     this.registry = [];
     this.contentCache = new Map();
+    this.registryMtimeMs = 0;
     this.loadRegistry(true);
+  }
+
+  getRegistryMtime() {
+    try {
+      return fs.existsSync(this.registryFile) ? fs.statSync(this.registryFile).mtimeMs : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  /**
+   * Menyinkronkan registry dan membersihkan cache bila berkas knowledge_registry.json
+   * berubah di disk oleh proses eksternal (MEM-01).
+   */
+  syncFromDiskIfChanged() {
+    const mtime = this.getRegistryMtime();
+    if (mtime && mtime !== this.registryMtimeMs) {
+      const res = readJsonSafeSync(this.registryFile);
+      if (res.ok && Array.isArray(res.data)) {
+        this.registry = res.data;
+        this.registryMtimeMs = res.mtimeMs;
+        this.contentCache.clear();
+      }
+    }
   }
 
   loadRegistry(initial = false) {
@@ -53,6 +78,7 @@ class KnowledgeManager {
     const res = readJsonSafeSync(this.registryFile);
     if (res.ok && Array.isArray(res.data)) {
       this.registry = res.data;
+      this.registryMtimeMs = res.mtimeMs;
     } else if (res.missing) {
       this.registry = [];
       this.saveRegistry();
@@ -65,6 +91,7 @@ class KnowledgeManager {
   saveRegistry() {
     try {
       atomicWriteJsonSync(this.registryFile, this.registry);
+      this.registryMtimeMs = this.getRegistryMtime();
     } catch (err) {
       console.error('[KnowledgeManager] Gagal menyimpan registry:', err.message);
     }
@@ -247,18 +274,22 @@ class KnowledgeManager {
     return entry.enabled;
   }
 
-  getActiveDocs(targetCategory = 'default') {
+  getActiveDocs(targetCategory = 'default', { allowUniversal = true } = {}) {
+    this.syncFromDiskIfChanged();
     return this.registry.filter((d) => {
       if (!d.enabled) return false;
-      return d.category === 'all' || d.category === targetCategory;
+      if (d.category === 'all') return allowUniversal;
+      return d.category === targetCategory;
     });
   }
 
   /**
    * Pencarian relevan berbobot kata kunci untuk tool query_knowledge.
+   * Mengembalikan string kosong bila tidak ada kecocokan agar tidak membocorkan dokumen tak terkait (DATA-02).
    */
-  searchKnowledge(query, targetCategory = 'default', maxMatches = 3) {
-    const activeDocs = this.getActiveDocs(targetCategory);
+  searchKnowledge(query, targetCategory = 'default', maxMatches = 3, options = {}) {
+    const allowUniversal = options.allowUniversal !== false;
+    const activeDocs = this.getActiveDocs(targetCategory, { allowUniversal });
     if (activeDocs.length === 0) return '';
 
     const rawQuery = String(query || '').toLowerCase().trim();
@@ -291,12 +322,7 @@ class KnowledgeManager {
       return scored.slice(0, maxMatches).map((s) => s.text).join('\n\n');
     }
 
-    // Fallback: kembalikan daftar judul + cuplikan awal bila kata kunci tidak persis cocok
-    const summaries = activeDocs.slice(0, 5).map((doc) => {
-      const content = this.readDocContentCached(doc);
-      return `[DOKUMEN: ${doc.title} (${doc.category})]\n${content.slice(0, 400)}`;
-    });
-    return summaries.join('\n\n').slice(0, 2000);
+    return '';
   }
 
   /**
@@ -304,11 +330,12 @@ class KnowledgeManager {
    * dan anggaran karakter (hemat token saat koleksi dokumen besar).
    * @param {string} targetCategory
    * @param {string} [queryText]
-   * @param {{ maxTotalChars?: number, maxPerDocChars?: number }} [options]
+   * @param {{ maxTotalChars?: number, maxPerDocChars?: number, allowUniversal?: boolean }} [options]
    * @returns {string}
    */
   getInjectedKnowledge(targetCategory = 'default', queryText = '', options = {}) {
-    const activeDocs = this.getActiveDocs(targetCategory);
+    const allowUniversal = options.allowUniversal !== false;
+    const activeDocs = this.getActiveDocs(targetCategory, { allowUniversal });
     if (activeDocs.length === 0) return '';
 
     const maxPerDocChars = options.maxPerDocChars ?? 3000;

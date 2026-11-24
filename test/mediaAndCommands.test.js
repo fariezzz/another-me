@@ -74,10 +74,13 @@ test('parseUtilityCommand and parseCapArgs handle ! and . prefixes, backup alias
   assert.equal(parseUtilityCommand('.burem SIRKEL').command, 'cap');
   assert.equal(parseUtilityCommand('.cuaca Bandung').command, 'cuaca');
   assert.equal(parseUtilityCommand('.waktu').command, 'jam');
-  assert.equal(parseUtilityCommand('.wiki kucing').command, 'cari');
   assert.equal(parseUtilityCommand('.acak a | b').command, 'pilih');
 
-  // Perintah bawaan !acep & !ask serta teks berawalan titik/tanda seru acak tidak boleh tertangkap
+  // !cari beserta aliasnya sudah dihapus (digantikan !ask); perintah bawaan & teks acak tidak boleh tertangkap
+  assert.equal(parseUtilityCommand('!cari presiden'), null);
+  assert.equal(parseUtilityCommand('.wiki kucing'), null);
+  assert.equal(parseUtilityCommand('.search berita'), null);
+  assert.equal(parseUtilityCommand('.info tes'), null);
   assert.equal(parseUtilityCommand('!acep off'), null);
   assert.equal(parseUtilityCommand('!ask kenapa langit biru'), null);
   assert.equal(parseUtilityCommand('!tanya halo'), null);
@@ -524,7 +527,8 @@ test('BaileysService supports fromMe commands in private & group chats, blocks l
     ]
   });
   assert.equal(sentMessages.length, 4);
-  assert.match(sentMessages[3].content.text, /Pong!/);
+  assert.match(sentMessages[3].content.text, /^Aktif \(\d+ milidetik\)\.$/);
+  assert.doesNotMatch(sentMessages[3].content.text, /Bot aktif|Large Language Model|gemma/i);
 
   // Anggota grup lain mengetik perintah 1 detik kemudian -> kena cooldown per-grup (1 peringatan),
   // lalu anggota ketiga 1 detik kemudian -> silent drop!
@@ -823,11 +827,15 @@ test('!sticker converts MP4 videos and animated GIFs into 512x512 animated WebP 
   }
 });
 
-test('!cari summarizes search results with LLM, falls back cleanly when LLM is offline, and never leaks internal prompts', async () => {
+test('stealth !ping/!menu for non-owner, owner fromMe !acep/!ask, quoted fromMe detection, groupStates pruning, and clean web_search tool', async () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
   const ToolRegistry = require('../src/tools/toolRegistry');
+  const ContextManager = require('../src/contextManager');
 
+  // 1. Tool web_search (dipakai agent AI, bukan !cari) tetap bersih tanpa potongan kalimat / bocor instruksi di hasil
   assert.equal(ToolRegistry.cleanSearchQueryForEncyclopedia('Siapa presiden indonesia?'), 'presiden indonesia');
-  assert.equal(ToolRegistry.cleanSearchQueryForEncyclopedia('siapa suami dari Carlotta Montelli'), 'suami dari Carlotta Montelli');
   assert.equal(ToolRegistry.extractFallbackEntityQuery('suami dari Carlotta Montelli'), 'Carlotta Montelli');
   assert.equal(
     ToolRegistry.trimToCleanSentences('Kalimat pertama selesai. Kalimat kedua juga selesai. Kalimat ketiga panjang sekali sampai melewati batas', 65),
@@ -838,116 +846,166 @@ test('!cari summarizes search results with LLM, falls back cleanly when LLM is o
   registry.searchDuckDuckGo = async () => [];
   registry.searchWikipedia = async () => [];
   registry.searchGoogleNewsRss = async () => [];
+  const emptySearch = await registry.executeWebSearch({ query: 'topik fiktif tak ada' });
+  assert.equal(emptySearch.total_ditemukan, 0);
+  assert.equal(emptySearch.hasil, '');
 
-  const emptySearchRes = await registry.executeWebSearch({ query: 'siapa suami dari Carlotta Montelli' });
-  assert.equal(emptySearchRes.success, true);
-  assert.equal(emptySearchRes.total_ditemukan, 0);
-  assert.deepEqual(emptySearchRes.items, []);
-  assert.equal(emptySearchRes.hasil, '');
-  assert.match(emptySearchRes.catatan_konteks, /Gunakan pengetahuan umum terbaikmu/i);
-
+  // 2. DATA-03: non-pemilik tidak melihat nama bot, uptime, maupun nama model di !ping / !menu
   const sent = [];
   const mockSocket = {
     sendMessage: async (jid, content) => {
       sent.push({ jid, content });
-      return { key: { id: `cari-${sent.length}` } };
+      return { key: { id: `stealth-${sent.length}` } };
     }
   };
+  const mockLlm = { model: 'gemma-4-26b-a4b-it', checkHealth: async () => ({ connected: true }) };
 
-  // 1. Hasil kosong + LLM tidak tersedia -> pesan ramah pengguna, tanpa bocor instruksi LLM
   await handleUtilityCommands({
     waSocket: mockSocket,
-    toolRegistry: registry,
-    llm: null,
-    remoteJid: '628111@s.whatsapp.net',
+    llm: mockLlm,
+    remoteJid: '628777@s.whatsapp.net',
+    senderKey: '628777',
+    fromMe: false,
+    profile: { isKnown: false, name: 'Asing' },
+    messageText: '!ping',
+    msg: { key: { remoteJid: '628777@s.whatsapp.net', id: 'p-1', fromMe: false }, message: { conversation: '!ping' } },
+    addLog: () => {}
+  });
+  await handleUtilityCommands({
+    waSocket: mockSocket,
+    llm: mockLlm,
+    remoteJid: '628777@s.whatsapp.net',
+    senderKey: '628777',
+    fromMe: false,
+    profile: { isKnown: false, name: 'Asing' },
+    messageText: '!menu',
+    msg: { key: { remoteJid: '628777@s.whatsapp.net', id: 'm-1', fromMe: false }, message: { conversation: '!menu' } },
+    addLog: () => {}
+  });
+  await handleUtilityCommands({
+    waSocket: mockSocket,
+    llm: mockLlm,
+    remoteJid: '628777@s.whatsapp.net',
     senderKey: 'owner',
     fromMe: true,
     profile: { isKnown: true, name: 'Pemilik' },
-    messageText: '!cari siapa suami dari Carlotta Montelli',
-    msg: {
-      key: { remoteJid: '628111@s.whatsapp.net', id: 'cari-empty-1', fromMe: true },
-      message: { conversation: '!cari siapa suami dari Carlotta Montelli' }
-    },
+    messageText: '!ping',
+    msg: { key: { remoteJid: '628777@s.whatsapp.net', id: 'p-own', fromMe: true }, message: { conversation: '!ping' } },
     addLog: () => {}
   });
-  assert.equal(sent.length, 1);
-  assert.match(sent[0].content.text, /belum ketemu hasil pencarian/i);
-  assert.doesNotMatch(sent[0].content.text, /Gunakan pengetahuan umum terbaikmu/i);
+  assert.match(sent[0].content.text, /^Aktif \(\d+ milidetik\)\.$/);
+  assert.doesNotMatch(sent[0].content.text, /gemma|Bot aktif|Another Me/i);
+  assert.match(sent[1].content.text, /\*Daftar Perintah Utilitas\*/);
+  assert.doesNotMatch(sent[1].content.text, /Another Me|!cari/i);
+  assert.match(sent[2].content.text, /gemma-4-26b-a4b-it/);
 
-  // 2. Hasil ditemukan + LLM aktif -> jawaban langsung ringkas + daftar sumber rapi
-  registry.searchWikipedia = async (_lang, q) => {
-    if (q === 'presiden indonesia') {
-      return [
-        {
-          source: 'Wikipedia (id)',
-          title: 'Presiden Indonesia',
-          snippet: 'Presiden Republik Indonesia adalah kepala negara sekaligus kepala pemerintahan Indonesia.',
-          url: 'https://id.wikipedia.org/wiki/Presiden_Indonesia'
-        }
-      ];
-    }
-    return [];
-  };
-  registry.searchGoogleNewsRss = async () => [
+  // 3. BUG-05: extractMediaCandidate mendeteksi fromMe: true saat membalas media milik akun bot sendiri
+  const quotedOwn = extractMediaCandidate(
     {
-      source: 'Berita (Sekretariat Kabinet)',
-      title: 'Presiden Prabowo Serahkan Nama Calon Wakil Presiden RI 2024-2029',
-      snippet: 'Presiden Prabowo Serahkan Nama Calon Wakil Presiden RI 2024-2029 (24 Nov 2026).',
-      url: ''
-    }
-  ];
-
-  const mockLlmOk = {
-    answerSearchQuery: async (query, items) => {
-      assert.equal(query, 'Siapa presiden indonesia');
-      assert.equal(items.length, 2);
-      return 'Presiden Republik Indonesia saat ini adalah Prabowo Subianto untuk masa jabatan 2024-2029.';
-    }
-  };
-
-  await handleUtilityCommands({
-    waSocket: mockSocket,
-    toolRegistry: registry,
-    llm: mockLlmOk,
-    remoteJid: '628111@s.whatsapp.net',
-    senderKey: 'owner',
-    fromMe: true,
-    profile: { isKnown: true, name: 'Pemilik' },
-    messageText: '!cari Siapa presiden indonesia',
-    msg: {
-      key: { remoteJid: '628111@s.whatsapp.net', id: 'cari-llm-ok', fromMe: true },
-      message: { conversation: '!cari Siapa presiden indonesia' }
+      key: { remoteJid: '120363999@g.us', id: 'q-1', fromMe: true },
+      message: {
+        extendedTextMessage: {
+          text: '!s',
+          contextInfo: {
+            stanzaId: 'own-img-id',
+            participant: '6281234567890@s.whatsapp.net',
+            quotedMessage: { imageMessage: { mimetype: 'image/jpeg', fileLength: 1024 } }
+          }
+        }
+      }
     },
-    addLog: () => {}
-  });
-  assert.equal(sent.length, 2);
-  assert.match(sent[1].content.text, /Prabowo Subianto/);
-  assert.match(sent[1].content.text, /_Sumber:_/);
-  assert.match(sent[1].content.text, /https:\/\/id\.wikipedia\.org\/wiki\/Presiden_Indonesia/);
+    null,
+    { isOwnUserJid: (jid) => jid === '6281234567890@s.whatsapp.net' }
+  );
+  assert.equal(quotedOwn.targetMsg.key.fromMe, true);
 
-  // 3. LLM sedang mati/gagal (mengembalikan string kosong) -> fallback otomatis ke daftar hasil rapi + URL
-  const mockLlmDown = {
-    answerSearchQuery: async () => ''
-  };
-
-  await handleUtilityCommands({
-    waSocket: mockSocket,
-    toolRegistry: registry,
-    llm: mockLlmDown,
-    remoteJid: '628111@s.whatsapp.net',
-    senderKey: 'owner',
-    fromMe: true,
-    profile: { isKnown: true, name: 'Pemilik' },
-    messageText: '.cari Siapa presiden indonesia',
-    msg: {
-      key: { remoteJid: '628111@s.whatsapp.net', id: 'cari-fallback-1', fromMe: true },
-      message: { conversation: '.cari Siapa presiden indonesia' }
-    },
-    addLog: () => {}
+  // 4. MEM-01: CommandAntiSpamGuard membersihkan groupStates tidak aktif > 2 jam
+  const guard = new CommandAntiSpamGuard({ knownJitterRange: [0, 0], unknownJitterRange: [0, 0] });
+  guard.checkAccess({
+    senderKey: '628555',
+    fromMe: false,
+    isKnown: false,
+    isGroup: true,
+    groupJid: '120363old@g.us',
+    nowMs: 1000
   });
-  assert.equal(sent.length, 3);
-  assert.match(sent[2].content.text, /\*Hasil Pencarian: Siapa presiden indonesia\*/);
-  assert.match(sent[2].content.text, /\*Presiden Indonesia\* \(Wikipedia \(id\)\)/);
-  assert.match(sent[2].content.text, /https:\/\/id\.wikipedia\.org\/wiki\/Presiden_Indonesia/);
-  assert.doesNotMatch(sent[2].content.text, /Gunakan informasi faktual ini/i);
+  assert.equal(guard.groupStates.has('120363old@g.us'), true);
+  guard.pruneOldEntries(1000 + 3 * 60 * 60 * 1000);
+  assert.equal(guard.groupStates.has('120363old@g.us'), false);
+
+  // 5. BUG-04: Pemilik dari ponsel utama (fromMe: true) bisa menjalankan !acep & !ask di ruang chat kontak terdaftar
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'another-me-owner-instant-'));
+  try {
+    fs.writeFileSync(
+      path.join(tmpDir, 'persona.json'),
+      JSON.stringify({ general_persona: {}, categories: { pacar: { tone: 'Hangat', few_shots: [] } } })
+    );
+    const cm = new ContextManager({ dataPath: tmpDir });
+    cm.upsertContact('174912345678901', { name: 'Angel', category: 'pacar', enabled: false });
+    const askDir = path.join(tmpDir, 'ask-queue');
+    const ownSent = [];
+
+    const service = new BaileysService({
+      llm: { model: 'gemma-4-26b-a4b-it', checkHealth: async () => ({ connected: true }) },
+      contextManager: cm,
+      knowledgeManager: { getInjectedKnowledge: () => '' },
+      toolRegistry: registry,
+      settingsStore: { getAll: () => ({ serviceEnabled: true, whitelistOnly: true, replyGroups: false }) },
+      addLog: () => {},
+      options: { askQueueDir: askDir }
+    });
+    service.waSocket = {
+      user: { id: '6281234567890:1@s.whatsapp.net', lid: '999888777666:1@lid' },
+      sendMessage: async (jid, content) => {
+        const id = `tracked-${ownSent.length + 1}`;
+        ownSent.push({ jid, content, id });
+        return { key: { id } };
+      },
+      sendPresenceUpdate: async () => {}
+    };
+
+    // Pemilik menyalakan AI untuk Angel langsung dari chat Angel via !acep on
+    await service.handleMessagesUpsert({
+      type: 'notify',
+      messages: [
+        {
+          key: { remoteJid: '174912345678901@lid', fromMe: true, id: 'own-acep-1' },
+          message: { conversation: '!acep on' }
+        }
+      ]
+    });
+    assert.equal(cm.contacts['174912345678901'].enabled, true);
+    assert.equal(ownSent[0].content.text, 'acep on lagi ya');
+    assert.equal(service.sentMessageIds.has(ownSent[0].id), true);
+
+    // Pemilik mengirim !ask langsung dari ruang chat terdaftar -> masuk ask-queue & dilacak di sentMessageIds
+    await service.handleMessagesUpsert({
+      type: 'notify',
+      messages: [
+        {
+          key: { remoteJid: '174912345678901@lid', fromMe: true, id: 'own-ask-1' },
+          message: { conversation: '!ask jadwal besok apa?' }
+        }
+      ]
+    });
+    assert.match(ownSent[1].content.text, /teruskan pertanyaanmu ke Kiraya/i);
+    assert.equal(service.sentMessageIds.has(ownSent[1].id), true);
+    const queuedFiles = fs.readdirSync(askDir).filter((f) => f.endsWith('.json'));
+    assert.equal(queuedFiles.length, 1);
+
+    // Pemilik mengetik !ask di chat kontak tak terdaftar -> ditolak sopan (tidak masuk antrean Muse)
+    await service.handleMessagesUpsert({
+      type: 'notify',
+      messages: [
+        {
+          key: { remoteJid: '628999888777@s.whatsapp.net', fromMe: true, id: 'own-ask-unknown' },
+          message: { conversation: '!ask tes orang asing' }
+        }
+      ]
+    });
+    assert.match(ownSent[2].content.text, /hanya berlaku di ruang chat kontak terdaftar/i);
+    assert.equal(fs.readdirSync(askDir).filter((f) => f.endsWith('.json')).length, 1);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
 });

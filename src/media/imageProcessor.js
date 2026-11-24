@@ -238,21 +238,35 @@ async function convertAnimatedGifWithSharp(
         background: { r: 0, g: 0, b: 0, alpha: 0 }
       };
 
-  const webpRaw = await sharp(inputBuffer, {
-    animated: true,
-    limitInputPixels: LIMIT_INPUT_PIXELS
-  })
-    .resize(resizeOptions)
-    .webp({ quality: 65, effort: 4, loop: 0 })
-    .toBuffer();
+  // Kompresi bertahap agar hasil GIF Sharp juga mematuhi batas 500 Kilobyte WhatsApp (MEM-01)
+  const qualities = [65, 42, 22];
+  let finalWithExif = null;
 
-  return injectWebpExif(webpRaw, {
-    packName,
-    author,
-    width: 512,
-    height: 512,
-    hasAlpha: true
-  });
+  for (const quality of qualities) {
+    const webpRaw = await sharp(inputBuffer, {
+      animated: true,
+      limitInputPixels: LIMIT_INPUT_PIXELS
+    })
+      .resize(resizeOptions)
+      .webp({ quality, effort: 4, loop: 0 })
+      .toBuffer();
+
+    finalWithExif = injectWebpExif(webpRaw, {
+      packName,
+      author,
+      width: 512,
+      height: 512,
+      hasAlpha: true
+    });
+    if (finalWithExif.length <= MAX_ANIMATED_STICKER_BYTES) {
+      return finalWithExif;
+    }
+  }
+
+  throw new MediaValidationError(
+    'ANIMATED_TOO_LARGE',
+    'Maaf, animasi GIF ini terlalu berat sehingga ukuran stiker bergeraknya masih melebihi batas 500 Kilobyte WhatsApp. Coba kirim GIF yang lebih singkat ya.'
+  );
 }
 
 /**
@@ -334,28 +348,33 @@ async function convertVideoOrGifToSticker(
   try {
     fs.writeFileSync(inputPath, inputBuffer);
 
-    // Kompresi adaptif bertahap agar hasil stiker bergerak <= 500 Kilobyte dan pasti diputar WhatsApp
+    // Kompresi adaptif bertahap agar hasil stiker bergerak <= 500 Kilobyte (termasuk EXIF) dan pasti diputar WhatsApp
     const passes = [
       { fps: 12, quality: 45, duration: safeDuration },
       { fps: 8, quality: 22, duration: Math.min(safeDuration, 6) },
-      { fps: 6, quality: 12, duration: Math.min(safeDuration, 5) }
+      { fps: 6, quality: 12, duration: Math.min(safeDuration, 5) },
+      { fps: 5, quality: 8, duration: Math.min(safeDuration, 3) }
     ];
 
-    let webpRaw = null;
+    let finalSticker = null;
     for (const pass of passes) {
-      webpRaw = await encodePass(pass);
-      if (webpRaw.length <= MAX_ANIMATED_STICKER_BYTES) {
-        break;
+      const webpRaw = await encodePass(pass);
+      finalSticker = injectWebpExif(webpRaw, {
+        packName,
+        author,
+        width: 512,
+        height: 512,
+        hasAlpha: true
+      });
+      if (finalSticker.length <= MAX_ANIMATED_STICKER_BYTES) {
+        return finalSticker;
       }
     }
 
-    return injectWebpExif(webpRaw, {
-      packName,
-      author,
-      width: 512,
-      height: 512,
-      hasAlpha: true
-    });
+    throw new MediaValidationError(
+      'ANIMATED_TOO_LARGE',
+      'Maaf, video atau GIF ini terlalu kompleks sehingga ukuran stiker bergeraknya masih melebihi batas 500 Kilobyte WhatsApp. Coba potong durasinya lebih pendek (3-4 detik) ya.'
+    );
   } catch (err) {
     if (err && err.code === 'ENOENT') {
       // Untuk GIF asli, fallback ke Sharp animasi jika FFmpeg belum terpasang

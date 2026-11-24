@@ -12,7 +12,7 @@ Bot ini membalas pesan WhatsApp sesuai gaya ketik pemilik berdasarkan kategori r
 - **Agent Harness (6 Function Calling Tools)**:
   - `get_current_time`: Jam, tanggal, dan fase waktu lokal (`Asia/Jakarta`).
   - `get_weather`: Prakiraan cuaca *real-time* via Open-Meteo.
-  - `web_search`: Pencarian web multi-mesin (DuckDuckGo + Wikipedia bahasa Indonesia dan Inggris).
+  - `web_search`: Pencarian web multi-mesin (Wikipedia kalimat pembuka utuh + Google News RSS + DuckDuckGo).
   - `get_available_stickers` & `send_sticker`: Daftar dan kirim stiker `.webp` otomatis (termasuk penanganan *pseudo-call* teks Gemma).
   - `query_knowledge`: Pencarian berbobot kata kunci dari basis pengetahuan pribadi.
 - **Aturan Perilaku Chat Alami**:
@@ -28,7 +28,7 @@ Bot ini membalas pesan WhatsApp sesuai gaya ketik pemilik berdasarkan kategori r
   - Bantuan & sistem: `!menu` (`help`, `bantuan`, `cmd`, `list`), `!ping` (`cek`, `status`, `uptime`).
   - Media & stiker berbasis Sharp & FFmpeg (batas 5 Megabyte, tolak berkas tidak didukung): `!sticker` (`stiker`, `s`, `stk` — mendukung foto, GIF, dan video pendek menjadi stiker bergerak, opsi `crop`), `!toimg` (`toimage`, `togif`, `img`, `gambar`, `foto` — stiker diam jadi gambar, stiker bergerak jadi GIF), `!wm <paket> | <pembuat>` (`steal`, `watermark`, `take`).
   - Meme kustom: `!text <teks>` (`teks`, `txt` — latar putih polos, teks hitam sans-serif tebal rata kiri blur tipis), `!stext <teks>` (`steks`, `stxt`, `brat`, `sbrat`, `st` — langsung stiker), dan `!cap <atas> | <bawah>` (`caption`, `burem`, `blurcap` — font Impact kapital isi putih outline hitam tebal, 1 teks otomatis di bawah, lalu seluruh gambar akhir di-blur Gaussian ringan 2–4 piksel).
-  - Utilitas harian gratis: `!cuaca [kota]` (`weather`, `suhu`), `!jam [zona]` (`waktu`, `time`, `tanggal`, `tgl`), `!cari <kata kunci>` (`wiki`, `search`, `info`), `!pilih <opsi1 | opsi2 | ...>` (`pick`, `choose`, `acak`, `random`).
+  - Utilitas harian gratis: `!cuaca [kota]` (`weather`, `suhu`), `!jam [zona]` (`waktu`, `time`, `tanggal`, `tgl`), `!pilih <opsi1 | opsi2 | ...>` (`pick`, `choose`, `acak`, `random`).
 - **Dukungan Linked Identity (`@lid`)**: Merekam Jabber Identifier (JID) asli pengirim di `data/contact_jids.json` (termasuk pemetaan alias Baileys v7) dan mendukung pengiriman aman lewat `/api/send-to-contact`.
 - **Knowledge Base Multi-Format**: Ekstraksi `.pdf`, `.docx`, `.md`, `.txt`, `.json`, `.csv`, catatan langsung (*snippet*), *cache* memori selektif hemat token, serta fitur lihat & edit isi dokumen dari dasbor.
 - **Training Room (Sandbox & Evaluasi Reflektif)**: Menggunakan perakit prompt yang identik dengan WhatsApp sungguhan, tanpa pernah mengirim pesan ke WhatsApp, dilengkapi interpretasi koreksi otomatis dan simpan 1 klik ke *Few-Shot* atau *Knowledge Base*.
@@ -64,12 +64,12 @@ another-me/
 │   │   ├── commandAntiSpam.js       # Pelindung anti-spam berlapis & pembatas konkurensi media
 │   │   ├── commandRouter.js         # Parser !acep, !ask, serta pemantau/pembersih ask-queue
 │   │   └── utilityCommands.js       # Router perintah utilitas & meme WhatsApp
-├── assets/
-│   └── fonts/                       # Font cadangan Anton (OFL 1.1) & fonts.conf khusus Linux
 │   ├── routes/
 │   │   └── apiRoutes.js             # Seluruh endpoint HTTP /api/*
 │   └── tools/
-│       └── toolRegistry.js          # 6 tools otonom (waktu, cuaca, DuckDuckGo+Wiki, stiker, KB)
+│       └── toolRegistry.js          # 6 tools otonom (waktu, cuaca, Wiki+News+DDG, stiker, KB)
+├── assets/
+│   └── fonts/                       # Font cadangan Anton (OFL 1.1) & fonts.conf khusus Linux
 ├── test/                            # Rangkaian uji otomatis berbasis node:test bawaan Node.js
 ├── data/
 │   ├── persona.json                 # Identitas persona, aturan ketik, & few-shot per kategori

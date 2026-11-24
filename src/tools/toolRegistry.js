@@ -424,16 +424,21 @@ class ToolRegistry {
 
     const query = String(args.query || '').trim();
     const category = context.category || 'default';
+    const allowUniversal = context.allowUniversalKnowledge !== false;
+
+    if (context.isGroup) {
+      return { success: false, pesan: 'Catatan pribadi tidak diakses pada percakapan grup publik.' };
+    }
 
     if (typeof this.knowledgeManager.searchKnowledge === 'function') {
-      const searched = this.knowledgeManager.searchKnowledge(query, category, 3);
+      const searched = this.knowledgeManager.searchKnowledge(query, category, 3, { allowUniversal });
       if (!searched) {
-        return { success: false, pesan: 'Tidak ada dokumen di knowledge base.' };
+        return { success: false, pesan: 'Tidak ditemukan catatan yang cocok di basis pengetahuan.' };
       }
       return { success: true, hasil: searched };
     }
 
-    const allKnowledge = this.knowledgeManager.getInjectedKnowledge(category);
+    const allKnowledge = this.knowledgeManager.getInjectedKnowledge(category, query, { allowUniversal });
     if (!allKnowledge) {
       return { success: false, pesan: 'Tidak ada dokumen di knowledge base.' };
     }
@@ -444,7 +449,7 @@ class ToolRegistry {
       return { success: true, hasil: matches.slice(0, 3).join('\n\n') };
     }
 
-    return { success: true, hasil: allKnowledge.slice(0, 1500) };
+    return { success: false, pesan: 'Tidak ditemukan catatan yang cocok di basis pengetahuan.' };
   }
 
   async searchWikipedia(lang, rawQuery) {

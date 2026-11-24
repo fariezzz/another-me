@@ -50,7 +50,8 @@ class OllamaClient {
       const response = await fetch(url, {
         method: 'POST',
         headers,
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(30000)
       });
 
       if (!response.ok) {
@@ -91,7 +92,8 @@ class OllamaClient {
       const response = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(30000)
       });
 
       if (!response.ok) {
@@ -121,7 +123,7 @@ class OllamaClient {
       const headers = {};
       if (this.apiKey) headers['Authorization'] = `Bearer ${this.apiKey}`;
 
-      const response = await fetch(endpoint, { method: 'GET', headers });
+      const response = await fetch(endpoint, { method: 'GET', headers, signal: AbortSignal.timeout(5000) });
       if (!response.ok) {
         return { connected: false, message: `Status code ${response.status}` };
       }
@@ -139,6 +141,9 @@ class OllamaClient {
   cleanResponse(text) {
     if (!text) return '';
     let cleaned = text.trim();
+    cleaned = cleaned.replace(/<(?:thought|think)>[\s\S]*?<\/(?:thought|think)>/gi, '');
+    cleaned = cleaned.replace(/<(?:thought|think)>[\s\S]*$/gi, '');
+    cleaned = cleaned.replace(/<\/?(?:thought|think)>/gi, '').trim();
     if ((cleaned.startsWith('"') && cleaned.endsWith('"')) || (cleaned.startsWith("'") && cleaned.endsWith("'"))) {
       cleaned = cleaned.slice(1, -1).trim();
     }

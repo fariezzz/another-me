@@ -99,6 +99,15 @@ class CommandAntiSpamGuard {
         }
       }
     }
+
+    // Bersihkan state grup tidak aktif agar tidak menumpuk di memori (MEM-01)
+    if (this.groupStates.size > 0) {
+      for (const [groupKey, gState] of this.groupStates.entries()) {
+        if (nowMs - (gState.lastCommandAt || 0) > 2 * ONE_HOUR_MS) {
+          this.groupStates.delete(groupKey);
+        }
+      }
+    }
   }
 
   getOrCreateSenderState(senderKey) {

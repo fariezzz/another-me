@@ -150,24 +150,71 @@ test('Express API enforces CORS, security headers, LID validation, LLM URL valid
   const base = `http://127.0.0.1:${port}`;
 
   try {
-    // 1. Security headers & CORS restriction
+    // 1. Security headers (incl. CSP), CORS restriction, & CSRF cross-site rejection (SEC-02)
     const evilRes = await fetch(`${base}/api/status`, { headers: { Origin: 'https://evil.example' } });
     assert.equal(evilRes.headers.get('access-control-allow-origin'), null);
     assert.equal(evilRes.headers.get('x-content-type-options'), 'nosniff');
     assert.equal(evilRes.headers.get('x-frame-options'), 'DENY');
+    assert.ok((evilRes.headers.get('content-security-policy') || '').includes("default-src 'self'"));
+
+    const csrfRes = await fetch(`${base}/api/settings/toggle-whitelist`, {
+      method: 'POST',
+      headers: { Origin: 'https://evil.example' }
+    });
+    assert.equal(csrfRes.status, 403);
+
+    const csrfFetchSiteRes = await fetch(`${base}/api/settings/toggle-service`, {
+      method: 'POST',
+      headers: { 'Sec-Fetch-Site': 'cross-site' }
+    });
+    assert.equal(csrfFetchSiteRes.status, 403);
+
+    // 1b. Cloudflare Tunnel header prevents loopback auth bypass when DASHBOARD_API_TOKEN is set (SEC-01)
+    const prevToken = process.env.DASHBOARD_API_TOKEN;
+    process.env.DASHBOARD_API_TOKEN = 'secret-audit-token-123';
+    try {
+      const cfNoToken = await fetch(`${base}/api/status`, {
+        headers: { 'CF-Connecting-IP': '203.0.113.10' }
+      });
+      assert.equal(cfNoToken.status, 401);
+
+      const cfWithToken = await fetch(`${base}/api/status`, {
+        headers: { 'CF-Connecting-IP': '203.0.113.10', 'X-Dashboard-Token': 'secret-audit-token-123' }
+      });
+      assert.equal(cfWithToken.status, 200);
+
+      // Pure local loopback without proxy headers still works when ALLOW_LOCAL_NO_AUTH !== 'false'
+      const localOk = await fetch(`${base}/api/status`);
+      assert.equal(localOk.status, 200);
+    } finally {
+      if (prevToken === undefined) delete process.env.DASHBOARD_API_TOKEN;
+      else process.env.DASHBOARD_API_TOKEN = prevToken;
+    }
+
+    // 1c. Toggling unknown contact returns 404 instead of silently creating a ghost contact (BUG-06)
+    const ghostToggle = await fetch(`${base}/api/contacts/628000000000/toggle`, { method: 'POST' });
+    assert.equal(ghostToggle.status, 404);
+    assert.equal(contextManager.contacts['628000000000'], undefined);
 
     const statusData = await evilRes.json();
     assert.equal(statusData.whatsapp.lastDisconnectReason, 408);
     assert.ok(statusData.whatsapp.qrSvg.startsWith('<svg '));
     assert.equal(statusData.askQueue.pendingCount, 0);
 
-    // 2. Reject invalid LLM URL protocol (SEC-03)
+    // 2. Reject invalid LLM URL protocol & cloud metadata SSRF host (SEC-03)
     const badLlmRes = await fetch(`${base}/api/settings/llm`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ baseUrl: 'file:///etc/passwd', model: 'x' })
     });
     assert.equal(badLlmRes.status, 400);
+
+    const ssrfRes = await fetch(`${base}/api/settings/llm`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ baseUrl: 'http://169.254.169.254/latest/meta-data', model: 'x' })
+    });
+    assert.equal(ssrfRes.status, 400);
 
     // 3. 16-digit registered LID without stored JID returns 409 instead of guessing @s.whatsapp.net (BUG-06)
     const lidRes = await fetch(`${base}/api/send-message`, {

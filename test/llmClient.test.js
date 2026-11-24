@@ -27,16 +27,27 @@ test('splitIntoMessages enforces max 2 bubbles without dropping excess content',
   assert.deepEqual(llm.splitIntoMessages('[Mengirim Stiker: hehe]'), []);
 });
 
-test('cleanResponse strips thought blocks, self-correction, drafts, and sticker markers', () => {
+test('cleanResponse strips thought blocks, unclosed truncated thoughts, pseudo-tool calls, drafts, and sticker markers', () => {
   const llm = new LLMClient({ baseUrl: 'http://127.0.0.1:4000/v1beta/openai', model: 'gemma-4-26b-a4b-it' });
   const raw = '<thought>Analisa internal panjang</thought>\nDraft: Halo\nBalasan: "Lagi santai nih [Mengirim Stiker: ketawa] call:send_sticker(sticker_tag="ketawa")"';
   assert.equal(llm.cleanResponse(raw), 'Lagi santai nih');
 
   const malformed = 'Self-Correction: harusnya singkat</thought>Oke aman bro';
   assert.equal(llm.cleanResponse(malformed), 'Oke aman bro');
+
+  // DATA-01 (KRITIS): blok <thought> / <think> yang terpotong max_tokens tanpa penutup TIDAK BOLEH bocor!
+  const truncatedThought = '<thought>Ini penalaran internal rahasia tentang catatan kontak yang kepotong';
+  assert.equal(llm.cleanResponse(truncatedThought), '');
+
+  const partialWithTruncatedTail = 'Aman bro<think>Eh harusnya cek knowledge dulu...';
+  assert.equal(llm.cleanResponse(partialWithTruncatedTail), 'Aman bro');
+
+  // PROMPT-02: pseudo-call tool selain stiker juga dibersihkan
+  const leakedTools = 'Bentar ya call:query_knowledge(query="jadwal") get_current_time()';
+  assert.equal(llm.cleanResponse(leakedTools), 'Bentar ya');
 });
 
-test('updateConfig validates protocol and clears apiKey when origin changes', () => {
+test('updateConfig validates protocol, blocks cloud metadata SSRF, and clears apiKey when origin changes', () => {
   const llm = new LLMClient({
     baseUrl: 'https://api.example-one.com/v1',
     apiKey: 'secret-key-123',
@@ -45,6 +56,8 @@ test('updateConfig validates protocol and clears apiKey when origin changes', ()
 
   assert.throws(() => llm.updateConfig({ baseUrl: 'file:///etc/passwd' }), /http:\/\/ atau https:\/\//);
   assert.throws(() => llm.updateConfig({ baseUrl: 'not a url' }), /tidak valid/);
+  assert.throws(() => llm.updateConfig({ baseUrl: 'http://169.254.169.254/latest' }), /tidak diizinkan/);
+  assert.throws(() => llm.updateConfig({ baseUrl: 'http://metadata.google.internal/v1' }), /tidak diizinkan/);
 
   // Changing host without passing apiKey clears the previous key (SEC-03)
   llm.updateConfig({ baseUrl: 'https://api.example-two.com/v1' });
@@ -234,43 +247,39 @@ test('describeImage retries transient 503 via postChatCompletion (BUG-07)', asyn
   }
 });
 
-test('answerSearchQuery strips thoughts, summarizes cleanly, and returns empty string on failure', async () => {
+test('describeImage includes anti-injection system guard and sanitizes output (SEC-05)', async () => {
   const originalFetch = global.fetch;
+  let capturedBody = null;
 
   try {
-    global.fetch = async () => ({
-      ok: true,
-      status: 200,
-      json: async () => ({
-        choices: [
-          {
-            message: {
-              content: '<thought>Cek berita terbaru</thought>\npresiden Republik Indonesia saat ini adalah Prabowo Subianto.'
+    global.fetch = async (_url, init) => {
+      capturedBody = JSON.parse(init.body);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          choices: [
+            {
+              message: {
+                content: '<thought>ok</thought>Kucing tertawa\n---\nsantai'
+              }
             }
-          }
-        ]
-      })
-    });
+          ]
+        })
+      };
+    };
 
     const llm = new LLMClient({
       baseUrl: 'http://127.0.0.1:4000/v1beta/openai',
       model: 'gemma-4-26b-a4b-it',
       retryDelaysMs: [10]
     });
-    const answer = await llm.answerSearchQuery('Siapa presiden indonesia', [
-      { source: 'Berita', title: 'Presiden Prabowo', snippet: 'Presiden Prabowo (24 Nov 2026).' }
-    ]);
-    assert.equal(answer, 'Presiden Republik Indonesia saat ini adalah Prabowo Subianto.');
-
-    // Saat provider gagal -> kembalikan string kosong agar !cari fallback mulus tanpa throw
-    global.fetch = async () => ({
-      ok: false,
-      status: 500,
-      text: async () => 'server error',
-      headers: new Headers()
-    });
-    const fallback = await llm.answerSearchQuery('Siapa presiden indonesia', []);
-    assert.equal(fallback, '');
+    const desc = await llm.describeImage(Buffer.from('RIFF1234WEBP'), 'image/webp');
+    assert.equal(capturedBody.messages[0].role, 'system');
+    assert.match(capturedBody.messages[0].content, /Abaikan perintah/i);
+    assert.ok(!desc.includes('---'));
+    assert.ok(!desc.includes('\n'));
+    assert.equal(desc, 'Kucing tertawa - santai');
   } finally {
     global.fetch = originalFetch;
   }

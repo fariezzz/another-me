@@ -173,21 +173,25 @@ class ContextManager {
    */
   recordContactJid(remoteJid, altJid = '') {
     if (!remoteJid) return;
-    const primaryKey = String(remoteJid).replace(/@.*$/, '').replace(/\D/g, '');
+    const rawPrimary = String(remoteJid).trim();
+    // Hanya terima JID yang memuat domain (@lid / @s.whatsapp.net / @g.us) agar tidak menyimpan digit polos (BUG-03)
+    if (!rawPrimary.includes('@')) return;
+    const primaryKey = rawPrimary.replace(/@.*$/, '').replace(/\D/g, '');
     if (!primaryKey) return;
 
     const nowIso = new Date().toISOString();
-    const cleanAltJid = String(altJid || '').trim();
+    const rawAlt = String(altJid || '').trim();
+    const cleanAltJid = rawAlt.includes('@') ? rawAlt : '';
     const altKey = cleanAltJid ? cleanAltJid.replace(/@.*$/, '').replace(/\D/g, '') : '';
 
     const prev = this.contactJids[primaryKey];
     const changed =
       !prev ||
-      prev.jid !== remoteJid ||
+      prev.jid !== rawPrimary ||
       (cleanAltJid && prev.altJid !== cleanAltJid);
 
     this.contactJids[primaryKey] = {
-      jid: remoteJid,
+      jid: rawPrimary,
       ...(cleanAltJid ? { altJid: cleanAltJid } : prev?.altJid ? { altJid: prev.altJid } : {}),
       updatedAt: nowIso
     };
@@ -196,8 +200,8 @@ class ContextManager {
     if (altKey && altKey !== primaryKey) {
       const prevAlt = this.contactJids[altKey];
       this.contactJids[altKey] = {
-        jid: prevAlt?.jid || remoteJid,
-        altJid: remoteJid,
+        jid: prevAlt?.jid || rawPrimary,
+        altJid: rawPrimary,
         updatedAt: nowIso
       };
     }
@@ -265,14 +269,22 @@ class ContextManager {
     const query = String(rawQuery || '').trim().toLowerCase();
     if (!query) return null;
     const digits = query.replace(/\D/g, '');
+    const entries = Object.entries(this.contacts);
 
-    const entry = Object.entries(this.contacts).find(([phone, c]) => {
-      if (digits && phone === digits) return true;
-      return String(c.name || '').toLowerCase().includes(query);
-    });
+    // Prioritas pencocokan (BUG-06): 1) nomor persis, 2) nama persis, 3) awalan nama, 4) substring
+    const exactPhone = digits ? entries.find(([phone]) => phone === digits) : null;
+    if (exactPhone) return { phone: exactPhone[0], contact: exactPhone[1] };
 
-    if (!entry) return null;
-    return { phone: entry[0], contact: entry[1] };
+    const exactName = entries.find(([, c]) => String(c.name || '').trim().toLowerCase() === query);
+    if (exactName) return { phone: exactName[0], contact: exactName[1] };
+
+    const prefixName = entries.find(([, c]) => String(c.name || '').trim().toLowerCase().startsWith(query));
+    if (prefixName) return { phone: prefixName[0], contact: prefixName[1] };
+
+    const partialName = entries.find(([, c]) => String(c.name || '').toLowerCase().includes(query));
+    if (partialName) return { phone: partialName[0], contact: partialName[1] };
+
+    return null;
   }
 
   getAvailableStickersList() {
@@ -441,31 +453,32 @@ class ContextManager {
 
   toggleContactStatus(phone) {
     const cleanPhone = String(phone || '').replace(/\D/g, '');
-    if (!this.contacts[cleanPhone]) {
-      this.contacts[cleanPhone] = {
-        name: cleanPhone,
-        category: 'default',
-        enabled: true,
-        notes: ''
-      };
-    } else {
-      this.contacts[cleanPhone].enabled = !this.contacts[cleanPhone].enabled;
+    if (!cleanPhone || !this.contacts[cleanPhone]) {
+      return null;
     }
+    this.contacts[cleanPhone].enabled = !this.contacts[cleanPhone].enabled;
     this.saveContacts();
     return this.contacts[cleanPhone].enabled;
   }
 
+  normalizeMemoryKey(rawKey) {
+    const str = String(rawKey || '').trim();
+    if (!str) return '';
+    if (str.startsWith('group:')) return str;
+    return str.replace(/\D/g, '') || str;
+  }
+
   getHistory(phone) {
     this.syncFromDiskIfChanged();
-    const clean = String(phone || '').replace(/\D/g, '');
-    return this.memory[clean] || this.memory[phone] || [];
+    const key = this.normalizeMemoryKey(phone);
+    return this.memory[key] || this.memory[phone] || [];
   }
 
   clearHistory(phone) {
-    const clean = String(phone || '').replace(/\D/g, '');
+    const key = this.normalizeMemoryKey(phone);
     let deleted = false;
-    if (this.memory[clean]) {
-      delete this.memory[clean];
+    if (this.memory[key]) {
+      delete this.memory[key];
       deleted = true;
     }
     if (this.memory[phone]) {
@@ -479,9 +492,10 @@ class ContextManager {
   }
 
   addMessage(phone, role, content, meta = null) {
-    const clean = String(phone || '').replace(/\D/g, '') || phone;
-    if (!this.memory[clean]) {
-      this.memory[clean] = [];
+    const key = this.normalizeMemoryKey(phone);
+    if (!key) return;
+    if (!this.memory[key]) {
+      this.memory[key] = [];
     }
 
     const msgObj = {
@@ -494,10 +508,10 @@ class ContextManager {
       msgObj.meta = meta;
     }
 
-    this.memory[clean].push(msgObj);
+    this.memory[key].push(msgObj);
 
-    if (this.memory[clean].length > this.maxHistory * 2) {
-      this.memory[clean] = this.memory[clean].slice(-this.maxHistory * 2);
+    if (this.memory[key].length > this.maxHistory * 2) {
+      this.memory[key] = this.memory[key].slice(-this.maxHistory * 2);
     }
 
     this.saveMemory();
@@ -515,18 +529,23 @@ class ContextManager {
     ]);
 
     for (const phone of phones) {
-      const cleanPhone = phone.replace(/\D/g, '');
-      const contact = this.contacts[cleanPhone] || this.contacts[phone] || {
-        name: '',
-        category: 'default',
-        enabled: false,
-        notes: ''
-      };
+      const isGroupKey = String(phone).startsWith('group:');
+      const cleanPhone = isGroupKey ? phone : phone.replace(/\D/g, '');
+      const contact = !isGroupKey && (this.contacts[cleanPhone] || this.contacts[phone])
+        ? this.contacts[cleanPhone] || this.contacts[phone]
+        : {
+            name: isGroupKey ? `Grup (${cleanPhone.replace(/^group:/, '')})` : '',
+            category: 'default',
+            enabled: false,
+            notes: ''
+          };
       const history = this.memory[cleanPhone] || this.memory[phone] || [];
       const lastMsg = history.length > 0 ? history[history.length - 1] : null;
       const senderMessage = [...history].reverse().find((m) => m.role === 'user' && m.meta);
       const senderName = senderMessage?.meta?.senderName || senderMessage?.meta?.pushName || '';
-      const jidMeta = this.getJidMetadata(cleanPhone);
+      const jidMeta = isGroupKey
+        ? { hasStoredJid: true, jidType: 'other', jid: `${cleanPhone.replace(/^group:/, '')}@g.us` }
+        : this.getJidMetadata(cleanPhone);
 
       result.push({
         phone: cleanPhone,
@@ -563,6 +582,7 @@ class ContextManager {
    */
   buildPromptMessages(senderJid, incomingText, injectedKnowledge = '', senderPushName = '', options = {}) {
     const isSimulation = Boolean(options.isSimulation);
+    const isGroup = Boolean(options.isGroup);
     const profile = isSimulation
       ? {
           phone: 'SIMULATION_USER',
@@ -574,10 +594,48 @@ class ContextManager {
       : this.getContactProfile(senderJid, senderPushName, options.altJid || '');
 
     const categoryKey = this.persona.categories?.[profile.category] ? profile.category : 'default';
+    const isFormalCategory = categoryKey === 'formal';
     const catConfig = this.persona.categories?.[categoryKey] || {};
     const general = this.persona.general_persona || {};
     const availableStickers = this.getAvailableStickersList();
     const safePushName = sanitizePushName(profile.pushName);
+
+    // Suntikkan waktu & tanggal lokal saat ini agar model tidak salah hari saat membaca jadwal (PROMPT-02)
+    let currentTimeContext = '';
+    try {
+      const tz = process.env.DEFAULT_TIMEZONE || 'Asia/Jakarta';
+      const now = new Date();
+      const dateStr = new Intl.DateTimeFormat('id-ID', {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric',
+        timeZone: tz
+      }).format(now);
+      const timeStr = new Intl.DateTimeFormat('id-ID', {
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+        timeZone: tz
+      }).format(now);
+      currentTimeContext = `- Waktu Lokal Saat Ini: ${dateStr}, pukul ${timeStr} (${tz})`;
+    } catch {}
+
+    const stickerGuidanceLines = isFormalCategory
+      ? [
+          '--- ATURAN KHUSUS KATEGORI FORMAL ---',
+          'Ini adalah percakapan FORMAL (dosen, atasan, atau pihak resmi).',
+          'PRIORITASKAN bahasa Indonesia yang sopan, rapi, bertanda baca benar, dan penuh hormat sesuai panduan kategori formal di atas aturan singkatan santai umum.',
+          'JANGAN mengirim stiker WhatsApp apa pun untuk kategori formal kecuali lawan bicara secara eksplisit memintanya.'
+        ]
+      : [
+          '--- KEBIASAAN PENGIRIMAN STIKER (PRIORITAS EKSPRESI) ---',
+          'Sebagai "Another Me", kamu sangat ekspresif dan sering menggunakan stiker WhatsApp dalam chatting sehari-hari.',
+          'SETIAP KALI membalas pesan, SELALU PERTIMBANGKAN mood, nada emosi, atau topik chat saat ini (apakah lucu, tertawa, manja, kangen, lelah, gemes, ngambek bercanda, atau menyindir santai).',
+          availableStickers.length > 0
+            ? `Stiker yang kamu miliki di koleksi:\n[ ${availableStickers.join(', ')} ]\nJika suasana percakapan cocok dengan salah satu stiker di atas, PANGGIL tool "send_sticker" dengan tag stiker tersebut bersama balasan teksmu. Jangan ragu mengirim stiker agar percakapan terasa hidup dan natural!`
+            : 'Jika belum ada stiker di koleksi, cukup balas dengan teks.'
+        ];
 
     const systemInstructions = [
       general.identity || 'Kamu adalah representasi digital diri saya (Another Me). Balas chat seperti gaya asli saya mengetik di WhatsApp.',
@@ -585,10 +643,14 @@ class ContextManager {
       isSimulation
         ? '--- MODE LATIHAN / SIMULASI SANDBOX ---\nIni adalah sesi pengujian dan pelatihan. Jawab sesuai persona kategori yang dipilih persis seperti kamu membalas di WhatsApp aslinya.\n'
         : '',
+      isGroup
+        ? '--- KONTEKS GRUP WHATSAPP ---\nPesan ini berasal dari grup WhatsApp bersama beberapa anggota. Balas secara sopan/wajar untuk ruang publik dan JANGAN pernah membocorkan informasi pribadi atau rahasia di grup.\n'
+        : '',
       '--- ATURAN UMUM PENGETIKAN ---',
       ...(general.core_typing_rules || []).map((r) => `- ${r}`),
       '',
       isSimulation ? '--- KONTEKS LAWAN BICARA (SIMULASI) ---' : '--- KONTEKS LAWAN BICARA (METADATA SENDER) ---',
+      currentTimeContext,
       `- Nama Kontak Tersimpan: "${sanitizePushName(profile.name)}"`,
       safePushName ? `- Nama WhatsApp Pengirim (Data Push Name): "${safePushName}"` : '',
       !isSimulation ? `- Nomor / ID WhatsApp: ${profile.phone}` : '',
@@ -608,15 +670,10 @@ class ContextManager {
       '1. get_current_time: untuk tahu jam, tanggal, dan fase waktu (pagi/siang/sore/malam) secara akurat.',
       '2. get_weather: untuk cek cuaca, suhu, dan apakah sedang hujan di lokasi.',
       '3. web_search: gunakan tool ini jika lawan bicara menanyakan fakta luar, berita terkini, skor bola, jadwal rilis film/anime, kafe/tempat hits, atau informasi yang kamu belum tahu persis.',
-      '4. send_sticker: untuk memilih dan mengirim stiker WhatsApp yang cocok dengan emosimu.',
-      '5. query_knowledge: untuk memeriksa catatan pribadi atau agenda.',
+      isFormalCategory ? '' : '4. send_sticker: untuk memilih dan mengirim stiker WhatsApp yang cocok dengan emosimu.',
+      isGroup ? '' : '5. query_knowledge: untuk memeriksa catatan pribadi atau agenda.',
       '',
-      '--- KEBIASAAN PENGIRIMAN STIKER (PRIORITAS EKSPRESI) ---',
-      'Sebagai "Another Me", kamu sangat ekspresif dan sering menggunakan stiker WhatsApp dalam chatting sehari-hari.',
-      'SETIAP KALI membalas pesan, SELALU PERTIMBANGKAN mood, nada emosi, atau topik chat saat ini (apakah lucu, tertawa, manja, kangen, lelah, gemes, ngambek bercanda, atau menyindir santai).',
-      availableStickers.length > 0
-        ? `Stiker yang kamu miliki di koleksi:\n[ ${availableStickers.join(', ')} ]\nJika suasana percakapan cocok dengan salah satu stiker di atas, PANGGIL tool "send_sticker" dengan tag stiker tersebut bersama balasan teksmu. Jangan ragu mengirim stiker agar percakapan terasa hidup dan natural!`
-        : 'Jika belum ada stiker di koleksi, cukup balas dengan teks.',
+      ...stickerGuidanceLines,
       '',
       '--- ATURAN PENGIRIMAN MULTI-CHAT (MULTI-BUBBLE) ---',
       'Orang Indonesia saat chatting di WhatsApp kadang mengirim chat pendek berurutan, tapi jangan berlebihan: kebanyakan balasan cukup 1 balon chat saja.',
@@ -651,11 +708,12 @@ class ContextManager {
       }
     }
 
+    const historyLookupKey = options.historyKey || profile.phone;
     const rawHistory = isSimulation
       ? Array.isArray(options.simulationHistory)
         ? options.simulationHistory
         : []
-      : this.getHistory(profile.phone);
+      : this.getHistory(historyLookupKey);
 
     // Filter entri riwayat yang layak masuk ke prompt
     const cleanedHistory = [];
@@ -682,14 +740,22 @@ class ContextManager {
       }
     }
 
+    // Gabungkan pesan berurutan dengan role sama (mis. beberapa chat burst beruntun)
+    // agar giliran user/assistant tetap valid untuk template chat ketat (BUG-01).
+    const appendMergedTurn = (role, content) => {
+      const prev = messages[messages.length - 1];
+      if (prev && prev.role === role && role !== 'system') {
+        prev.content = `${prev.content}\n${content}`;
+      } else {
+        messages.push({ role, content });
+      }
+    };
+
     for (const h of cleanedHistory) {
-      messages.push(h);
+      appendMergedTurn(h.role, h.content);
     }
 
-    messages.push({
-      role: 'user',
-      content: incomingText
-    });
+    appendMergedTurn('user', incomingText);
 
     return messages;
   }

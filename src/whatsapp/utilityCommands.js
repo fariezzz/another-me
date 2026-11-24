@@ -6,7 +6,7 @@
  * - Bantuan & sistem: !menu, !ping
  * - Media & stiker:   !sticker, !toimg, !wm
  * - Meme kustom:      !text, !stext, !cap
- * - Utilitas harian:  !cuaca, !jam, !cari, !pilih
+ * - Utilitas harian:  !cuaca, !jam, !pilih
  *
  * Perintah bawaan !acep dan !ask tetap ditangani terpisah oleh commandRouter.js.
  */
@@ -46,7 +46,6 @@ const COMMAND_ALIAS_GROUPS = {
   cap: ['cap', 'caption', 'burem', 'blurcap'],
   cuaca: ['cuaca', 'weather', 'suhu'],
   jam: ['jam', 'waktu', 'time', 'tanggal', 'tgl'],
-  cari: ['cari', 'wiki', 'search', 'info'],
   pilih: ['pilih', 'pick', 'choose', 'acak', 'random']
 };
 
@@ -276,7 +275,7 @@ function inspectMediaInContent(content) {
  * Mengekstrak sumber media dari pesan langsung (caption) atau pesan yang dibalas (quotedMessage).
  * Mengembalikan { kind, source, mimeType, fileLength, targetMsg } atau null jika tidak ada media.
  */
-function extractMediaCandidate(msg, normalizedMessage) {
+function extractMediaCandidate(msg, normalizedMessage, { isOwnUserJid, isOwnMessageId } = {}) {
   if (isViewOnceRawMessage(msg?.message)) {
     return { kind: 'view_once', source: 'direct', mimeType: '', fileLength: 0, targetMsg: null };
   }
@@ -313,13 +312,17 @@ function extractMediaCandidate(msg, normalizedMessage) {
     const quotedNormalized = unwrapWhatsAppMessage(ctxInfo.quotedMessage);
     const quotedMedia = inspectMediaInContent(quotedNormalized);
     if (quotedMedia) {
+      const quotedFromMe = Boolean(
+        (ctxInfo.participant && typeof isOwnUserJid === 'function' && isOwnUserJid(ctxInfo.participant)) ||
+          (ctxInfo.stanzaId && typeof isOwnMessageId === 'function' && isOwnMessageId(ctxInfo.stanzaId))
+      );
       return {
         ...quotedMedia,
         source: 'quoted',
         targetMsg: {
           key: {
             remoteJid: msg.key?.remoteJid,
-            fromMe: false,
+            fromMe: quotedFromMe,
             id: ctxInfo.stanzaId || msg.key?.id,
             participant: ctxInfo.participant || undefined
           },
@@ -346,10 +349,11 @@ function formatUptime(seconds) {
   return parts.join(' ');
 }
 
-function buildMenuText({ showOwnerCommands = false } = {}) {
+function buildMenuText({ showOwnerCommands = false, isOwner = false } = {}) {
+  const header = isOwner ? '*Daftar Perintah Another Me*' : '*Daftar Perintah Utilitas*';
   const sections = [
-    '*Daftar Perintah Another Me*',
-    '_Semua perintah utilitas di bawah ini bisa memakai awalan `!` maupun `.` (contoh: `!s` atau `.s`)._',
+    header,
+    '_Semua perintah di bawah ini bisa memakai awalan `!` maupun `.` (contoh: `!s` atau `.s`)._',
     '',
     '*Media & Stiker:*',
     '- `!sticker` (`stiker`, `s`, `stk`) — ubah foto, GIF, atau video pendek (<= 15 detik) jadi stiker statis/bergerak (tambah `crop` untuk potong penuh 1:1)',
@@ -364,9 +368,8 @@ function buildMenuText({ showOwnerCommands = false } = {}) {
     '*Utilitas Harian:*',
     '- `!cuaca [kota]` (`weather`, `suhu`) — cek cuaca terkini (bawaan: Tasikmalaya)',
     '- `!jam [zona]` (`waktu`, `time`, `tanggal`, `tgl`) — cek hari, tanggal, dan jam',
-    '- `!cari <pertanyaan / kata kunci>` (`wiki`, `search`, `info`) — cari info web & Wikipedia lalu ringkas jawabannya',
     '- `!pilih <a | b | c>` (`pick`, `choose`, `acak`, `random`) — pilih satu opsi secara acak',
-    '- `!ping` (`cek`, `status`, `uptime`) — cek respons dan status bot',
+    '- `!ping` (`cek`, `status`, `uptime`) — cek waktu respons',
     '- `!menu` (`help`, `bantuan`, `cmd`, `list`) — tampilkan daftar perintah ini'
   ];
 
@@ -435,6 +438,8 @@ async function handleUtilityCommands({
   waSocket,
   sendTrackedMessage,
   downloadMediaBuffer,
+  isOwnUserJid,
+  isOwnMessageId,
   remoteJid,
   senderKey,
   fromMe = false,
@@ -450,6 +455,8 @@ async function handleUtilityCommands({
 }) {
   const parsed = parseUtilityCommand(messageText);
   if (!parsed) return false;
+
+  const mediaLookupOpts = { isOwnUserJid, isOwnMessageId };
 
   const replyFn = async (payload, options = { quoted: msg }) => {
     if (typeof sendTrackedMessage === 'function') {
@@ -508,7 +515,8 @@ async function handleUtilityCommands({
     switch (parsed.command) {
       case 'menu': {
         const menuText = buildMenuText({
-          showOwnerCommands: fromMe || Boolean(profile?.isKnown)
+          showOwnerCommands: fromMe || Boolean(profile?.isKnown),
+          isOwner: fromMe
         });
         await replyFn({ text: menuText });
         addLog('info', `Perintah ${parsed.trigger} dijalankan oleh ${actorLabel}.`);
@@ -517,6 +525,13 @@ async function handleUtilityCommands({
 
       case 'ping': {
         const startedAt = Date.now();
+        if (!fromMe) {
+          // Sembunyikan identitas bot, uptime server, dan nama model dari non-pemilik (DATA-03)
+          const elapsedMs = Date.now() - startedAt;
+          await replyFn({ text: `Aktif (${elapsedMs} milidetik).` });
+          addLog('info', `Perintah ${parsed.trigger} (mode ringkas) dijalankan oleh ${actorLabel}.`);
+          return true;
+        }
         let llmText = 'Tidak terhubung';
         if (llm && typeof llm.checkHealth === 'function') {
           try {
@@ -537,7 +552,7 @@ async function handleUtilityCommands({
       }
 
       case 'sticker': {
-        const candidate = extractMediaCandidate(msg, normalizedMessage);
+        const candidate = extractMediaCandidate(msg, normalizedMessage, mediaLookupOpts);
         if (!candidate) {
           await replyFn({
             text: 'Kirim foto, GIF, atau video pendek dengan caption `!sticker` (atau `!s` / `.s`), atau balas media tersebut ya. Tambahkan `crop` kalau mau potong kotak penuh.'
@@ -598,7 +613,7 @@ async function handleUtilityCommands({
       }
 
       case 'toimg': {
-        const candidate = extractMediaCandidate(msg, normalizedMessage);
+        const candidate = extractMediaCandidate(msg, normalizedMessage, mediaLookupOpts);
         if (!candidate || candidate.kind !== 'sticker') {
           await replyFn({
             text: 'Maaf, perintah `!toimg` hanya bisa dipakai untuk membalas stiker WhatsApp (bukan foto biasa, video, atau dokumen). Balas stikernya dengan `!toimg` ya.'
@@ -638,7 +653,7 @@ async function handleUtilityCommands({
       }
 
       case 'wm': {
-        const candidate = extractMediaCandidate(msg, normalizedMessage);
+        const candidate = extractMediaCandidate(msg, normalizedMessage, mediaLookupOpts);
         if (!candidate || candidate.kind !== 'sticker') {
           await replyFn({
             text: 'Balas sebuah stiker WhatsApp dengan `!wm <Nama Paket> | <Pembuat>`, contoh: `!wm Stikerku | Fariez`.'
@@ -700,7 +715,7 @@ async function handleUtilityCommands({
           return true;
         }
 
-        const candidate = extractMediaCandidate(msg, normalizedMessage);
+        const candidate = extractMediaCandidate(msg, normalizedMessage, mediaLookupOpts);
         if (!candidate) {
           await replyFn({
             text: 'Fotonya belum ada. Kirim foto dengan caption `!cap <teks atas> | <teks bawah>` atau balas sebuah foto ya.'
@@ -770,73 +785,6 @@ async function handleUtilityCommands({
         const text = `Sekarang hari *${res.tanggal}*, pukul *${res.jam}* (${res.waktu_fase}, zona ${res.zona_waktu}).`;
         await replyFn({ text });
         addLog('info', `Perintah ${parsed.trigger} dijalankan oleh ${actorLabel}.`);
-        return true;
-      }
-
-      case 'cari': {
-        if (!parsed.args) {
-          await replyFn({
-            text: 'Pakai: `!cari <pertanyaan atau kata kunci>`, contoh: `!cari siapa presiden indonesia`'
-          });
-          return true;
-        }
-        if (!toolRegistry || typeof toolRegistry.executeWebSearch !== 'function') {
-          await replyFn({ text: 'Maaf, layanan pencarian sedang tidak tersedia.' });
-          return true;
-        }
-
-        const res = await toolRegistry.executeWebSearch({ query: parsed.args });
-        const items = Array.isArray(res?.items) ? res.items : [];
-
-        // Ringkas hasil pencarian menjadi jawaban langsung & faktual memakai LLM bot (bukan Muse)
-        if (llm && typeof llm.answerSearchQuery === 'function') {
-          const summarized = await llm.answerSearchQuery(parsed.args, items);
-          if (summarized) {
-            let replyText = `*Hasil Pencarian: ${parsed.args}*\n\n${summarized}`;
-            if (items.length > 0) {
-              const sourceLines = items.slice(0, 3).map((item) => {
-                const line = `- ${item.title} (${item.source})`;
-                return item.url ? `${line}\n  ${item.url}` : line;
-              });
-              replyText += `\n\n_Sumber:_\n${sourceLines.join('\n')}`;
-            }
-            await replyFn({ text: replyText });
-            addLog('info', `Perintah ${parsed.trigger} ("${parsed.args}") diringkas oleh LLM untuk ${actorLabel}.`);
-            return true;
-          }
-        }
-
-        // Fallback otomatis ke daftar hasil pencarian rapi bila LLM tidak aktif atau gagal merespons
-        const hasResults =
-          items.length > 0 ||
-          (Boolean(res && res.success) &&
-            Number(res.total_ditemukan || 0) > 0 &&
-            typeof res.hasil === 'string' &&
-            res.hasil.trim().length > 0);
-
-        if (!hasResults) {
-          await replyFn({
-            text: `Maaf, belum ketemu hasil pencarian untuk "${parsed.args}". Coba pakai kata kunci yang lebih singkat atau langsung ke nama topiknya ya.`
-          });
-          addLog('info', `Perintah ${parsed.trigger} ("${parsed.args}") tidak menemukan hasil untuk ${actorLabel}.`);
-          return true;
-        }
-
-        const formattedBody =
-          items.length > 0
-            ? items
-                .slice(0, 4)
-                .map((item, idx) => {
-                  const header = `${idx + 1}. *${item.title}* (${item.source})`;
-                  const bodyLine = item.snippet ? `\n${item.snippet}` : '';
-                  const urlLine = item.url ? `\n${item.url}` : '';
-                  return `${header}${bodyLine}${urlLine}`;
-                })
-                .join('\n\n')
-            : res.hasil;
-
-        await replyFn({ text: `*Hasil Pencarian: ${parsed.args}*\n\n${formattedBody}` });
-        addLog('info', `Perintah ${parsed.trigger} ("${parsed.args}") dijalankan (mode fallback) oleh ${actorLabel}.`);
         return true;
       }
 

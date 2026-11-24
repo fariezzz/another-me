@@ -26,10 +26,14 @@ data/knowledge/*
 data/stickers/*
 !data/stickers/.gitkeep
 
-# Dokumen internal / session dump / logs / runtime QR
+# Dokumen internal / session dump / logs / runtime QR / berkas sementara atomik
 another-me.md
 whatsapp-qr.png
 *.log
+*.tmp
+*.bak
+data/*.tmp
+data/*.bak
 
 # OS specific files
 .DS_Store

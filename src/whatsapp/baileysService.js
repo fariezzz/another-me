@@ -23,14 +23,17 @@ function buildProxyAgent() {
 }
 
 const { renderQrToSvg } = require('../utils/atomicFile');
-const { handleInstantCommands } = require('./commandRouter');
+const { handleInstantCommands, parseAskCommand, parseAcepCommand } = require('./commandRouter');
 const { CommandAntiSpamGuard } = require('./commandAntiSpam');
 const {
   unwrapWhatsAppMessage,
   cleanCommandText,
   parseUtilityCommand,
+  parseFileLength,
   handleUtilityCommands
 } = require('./utilityCommands');
+
+const MAX_AUTO_VISION_STICKER_BYTES = 2 * 1024 * 1024; // 2 Megabyte batas aman stiker Vision otomatis (SEC-05)
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -361,16 +364,34 @@ class BaileysService {
 
       sock.ev.on('creds.update', saveCreds);
 
-      // Rekam pemetaan LID <-> nomor telepon yang dikirim Baileys v7
+      // Rekam pemetaan LID <-> nomor telepon yang dikirim Baileys v7 (BUG-03)
       sock.ev.on('lid-mapping.update', (mappings) => {
         if (this.waSocket !== sock || !mappings) return;
+        const normalizeMappedJid = (raw, suffix) => {
+          const val = String(raw || '').trim();
+          if (!val) return '';
+          if (val.includes('@')) return val;
+          const digits = val.replace(/\D/g, '');
+          return digits ? `${digits}${suffix}` : '';
+        };
         try {
+          if (!Array.isArray(mappings) && typeof mappings === 'object' && mappings.lid && mappings.pn) {
+            this.contextManager.recordContactJid(
+              normalizeMappedJid(mappings.lid, '@lid'),
+              normalizeMappedJid(mappings.pn, '@s.whatsapp.net')
+            );
+            return;
+          }
           const entries = Array.isArray(mappings) ? mappings : Object.entries(mappings);
           for (const item of entries) {
             if (Array.isArray(item) && item.length >= 2) {
-              this.contextManager.recordContactJid(String(item[0]), String(item[1]));
+              const first = normalizeMappedJid(item[0], '@lid');
+              const second = normalizeMappedJid(item[1], '@s.whatsapp.net');
+              if (first && second) this.contextManager.recordContactJid(first, second);
             } else if (item && item.lid && item.pn) {
-              this.contextManager.recordContactJid(String(item.lid), String(item.pn));
+              const lidJid = normalizeMappedJid(item.lid, '@lid');
+              const pnJid = normalizeMappedJid(item.pn, '@s.whatsapp.net');
+              if (lidJid && pnJid) this.contextManager.recordContactJid(lidJid, pnJid);
             }
           }
         } catch {}
@@ -478,15 +499,18 @@ class BaileysService {
     const batch = burst.items.splice(0, burst.items.length);
     burst.processing = true;
 
+    const signal = { aborted: false };
     let guardTimer = null;
     try {
       const timeoutPromise = new Promise((_, reject) => {
         guardTimer = setTimeout(() => {
+          signal.aborted = true;
           reject(new Error(`Batas waktu pemrosesan burst (${this.burstProcessTimeoutMs}ms) terlampaui`));
         }, this.burstProcessTimeoutMs);
       });
-      await Promise.race([this.processBurstReply(batch), timeoutPromise]);
+      await Promise.race([this.processBurstReply(batch, signal), timeoutPromise]);
     } catch (err) {
+      signal.aborted = true;
       this.addLog('error', `Gagal memproses burst dari ${remoteJid}: ${err.message}`);
       try {
         if (this.waSocket) await this.waSocket.sendPresenceUpdate('paused', remoteJid);
@@ -504,18 +528,30 @@ class BaileysService {
     }
   }
 
-  async processBurstReply(batch) {
+  async processBurstReply(batch, signal = { aborted: false }) {
     const latest = batch[batch.length - 1];
-    const { remoteJid, altJid, senderPhone, senderPushName, profile, messageText, msg } = latest;
+    const {
+      remoteJid,
+      senderJid,
+      altJid,
+      isGroup,
+      historyKey,
+      senderPhone,
+      senderPushName,
+      profile,
+      messageText,
+      msg
+    } = latest;
     const settings = this.settingsStore.getAll();
+    const replyAuthJid = isGroup ? senderJid || remoteJid : remoteJid;
 
-    if (!settings.serviceEnabled || !this.contextManager.shouldReply(remoteJid, settings.whitelistOnly, altJid)) {
+    if (!settings.serviceEnabled || !this.contextManager.shouldReply(replyAuthJid, settings.whitelistOnly, altJid)) {
       this.addLog('info', `Burst dari ${profile.name} (${batch.length} pesan) dilewati saat flush (AI nonaktif / bukan whitelist).`);
       return;
     }
 
-    if (!this.isConnected()) {
-      this.addLog('warn', `Burst dari ${profile.name} dilewati karena WhatsApp tidak terhubung.`);
+    if (!this.isConnected() || signal.aborted) {
+      this.addLog('warn', `Burst dari ${profile.name} dilewati karena WhatsApp tidak terhubung atau waktu habis.`);
       return;
     }
 
@@ -526,20 +562,47 @@ class BaileysService {
     await this.waSocket.sendPresenceUpdate('composing', remoteJid);
     const delay = getRandomDelay(this.typingDelayMin, this.typingDelayMax);
     await sleep(delay);
+    if (signal.aborted) return;
 
-    // Ambil knowledge relevan berdasarkan kategori & isi pesan terakhir
-    const relevantKnowledge = this.knowledgeManager.getInjectedKnowledge(profile.category, messageText);
+    // Rekam seluruh pesan dalam batch ke memori TEPAT sebelum merakit prompt
+    // agar pesan susulan yang masuk di tengah typing delay tidak mencemari urutan prompt (BUG-01).
+    const memoryTargetKey = historyKey || (isGroup ? `group:${remoteJid.replace(/@.*$/, '')}` : senderPhone);
+    for (const item of batch) {
+      this.contextManager.addMessage(memoryTargetKey, 'user', item.messageText, {
+        senderName: item.profile.name,
+        pushName: item.senderPushName,
+        phone: item.senderPhone,
+        category: item.profile.category,
+        ...(item.isGroup ? { groupJid: item.remoteJid } : {})
+      });
+    }
+
+    // Ambil knowledge relevan dengan pagar privasi ketat (DATA-02):
+    // - Grup publik: jangan pernah menyuntikkan dokumen pribadi!
+    // - Nomor tak terdaftar (saat whitelist nonaktif): jangan bocorkan dokumen universal ('all')!
+    const allowUniversalKnowledge = !isGroup && Boolean(profile.isKnown);
+    const relevantKnowledge = isGroup
+      ? ''
+      : this.knowledgeManager.getInjectedKnowledge(profile.category, messageText, {
+          allowUniversal: allowUniversalKnowledge
+        });
 
     const focalText = batch.length > 1
       ? `${messageText}\n[Catatan: lawan bicara baru saja mengirim ${batch.length} chat berurutan; chat-chat sebelumnya sudah ada di riwayat di atas dan hanya konteks. Jawab chat terakhir ini saja, jangan membalas chat-chat sebelumnya satu per satu.]`
       : messageText;
 
+    // Gunakan JID pengirim asli untuk resolusi profil & historyKey terpisah untuk grup (BUG-02)
     const promptMessages = this.contextManager.buildPromptMessages(
-      remoteJid,
+      replyAuthJid,
       focalText,
       relevantKnowledge,
       senderPushName,
-      { rawIncomingText: messageText, altJid }
+      {
+        rawIncomingText: messageText,
+        altJid,
+        historyKey: memoryTargetKey,
+        isGroup: Boolean(isGroup)
+      }
     );
 
     let agentResult = { replyText: '', actions: [], toolCallsLog: [] };
@@ -548,7 +611,9 @@ class BaileysService {
         category: profile.category,
         senderPhone,
         senderName: profile.name,
-        senderPushName
+        senderPushName,
+        isGroup: Boolean(isGroup),
+        allowUniversalKnowledge
       });
     } catch (aiErr) {
       this.addLog('error', `Gagal menjalankan Agent Loop LLM: ${aiErr.message}`);
@@ -556,13 +621,16 @@ class BaileysService {
       return;
     }
 
+    if (signal.aborted) return;
+
     const replyText = agentResult.replyText;
 
     if (agentResult.toolCallsLog && agentResult.toolCallsLog.length > 0) {
       for (const tlog of agentResult.toolCallsLog) {
-        this.addLog('info', `🔧 Tool Call [${tlog.name}] -> Args: ${JSON.stringify(tlog.args)}`, {
+        // Hindari menyimpan muatan hasil tool penuh (bisa berisi teks dokumen pribadi) di activityLogs (DATA-04)
+        this.addLog('info', `🔧 Tool Call [${tlog.name}] -> Args: ${JSON.stringify(tlog.args).slice(0, 120)}`, {
           tool: tlog.name,
-          result: tlog.result
+          success: tlog.result?.success !== false
         });
       }
     }
@@ -575,7 +643,7 @@ class BaileysService {
     const hasStickers = Array.isArray(agentResult.actions) && agentResult.actions.some((a) => a.type === 'send_sticker' && a.filePath);
 
     if (replyBubbles.length === 0 && !hasStickers) {
-      this.addLog('error', `Balasan AI kosong untuk ${profile.name} setelah dibersihkan (pesan: "${messageText}") - tidak ada balasan dikirim.`);
+      this.addLog('error', `Balasan AI kosong untuk ${profile.name} setelah dibersihkan (pesan: "${messageText.slice(0, 80)}") - tidak ada balasan dikirim.`);
       try { await this.waSocket.sendPresenceUpdate('paused', remoteJid); } catch {}
       return;
     }
@@ -590,6 +658,7 @@ class BaileysService {
 
     if (replyBubbles.length > 0) {
       for (let i = 0; i < replyBubbles.length; i++) {
+        if (signal.aborted) return;
         const bubbleText = replyBubbles[i];
         if (!bubbleText || bubbleText.trim().length === 0) continue;
 
@@ -597,17 +666,18 @@ class BaileysService {
           await this.waSocket.sendPresenceUpdate('composing', remoteJid);
           const interDelay = getRandomDelay(1500, 2800);
           await sleep(interDelay);
+          if (signal.aborted) return;
         }
 
         await this.waSocket.sendPresenceUpdate('paused', remoteJid);
         const sendOptions = i === 0 ? { quoted: msg } : {};
         await this.sendTrackedMessage(remoteJid, { text: bubbleText }, sendOptions);
 
-        this.contextManager.addMessage(senderPhone, 'assistant', bubbleText);
+        this.contextManager.addMessage(memoryTargetKey, 'assistant', bubbleText);
 
-        this.addLog('reply', `Balasan AI [${i + 1}/${replyBubbles.length}] terkirim ke ${profile.name}: "${bubbleText}"`, {
+        this.addLog('reply', `Balasan AI [${i + 1}/${replyBubbles.length}] terkirim ke ${profile.name}: "${bubbleText.slice(0, 140)}"`, {
           recipient: profile.name,
-          reply: bubbleText
+          preview: bubbleText.slice(0, 140)
         });
       }
     } else {
@@ -616,12 +686,13 @@ class BaileysService {
 
     if (agentResult.actions && agentResult.actions.length > 0) {
       for (const act of agentResult.actions) {
+        if (signal.aborted) return;
         if (act.type === 'send_sticker' && act.filePath) {
           try {
             const stickerBuffer = fs.readFileSync(act.filePath);
             await this.sendTrackedMessage(remoteJid, { sticker: stickerBuffer });
             this.addLog('reply', `Stiker [${act.tag}] terkirim ke ${profile.name}`);
-            this.contextManager.addMessage(senderPhone, 'assistant', `[Mengirim Stiker: ${act.tag}]`, { systemNote: true });
+            this.contextManager.addMessage(memoryTargetKey, 'assistant', `[Mengirim Stiker: ${act.tag}]`, { systemNote: true });
           } catch (stkErr) {
             this.addLog('error', `Gagal mengirim stiker [${act.tag}]: ${stkErr.message}`);
           }
@@ -690,11 +761,44 @@ class BaileysService {
             continue;
           }
 
+          // Pemilik dari ponsel utama boleh menjalankan !acep dan !ask di ruang chat kontak terdaftar (BUG-04)
+          if (!isGroup && cleanedText.length > 0 && (parseAskCommand(cleanedText).matched || parseAcepCommand(cleanedText, true).matched)) {
+            const ownAltJid = msg.key.remoteJidAlt || msg.key.senderPn || '';
+            this.contextManager.recordContactJid(remoteJid, ownAltJid);
+            const targetProfile = this.contextManager.getContactProfile(remoteJid, '', ownAltJid);
+            if (targetProfile.isKnown) {
+              const handledOwnerInstant = await handleInstantCommands({
+                waSocket: this.waSocket,
+                sendTrackedMessage: (jid, content, opts) => this.sendTrackedMessage(jid, content, opts),
+                remoteJid,
+                senderPhone: targetProfile.phone,
+                senderPushName: 'Pemilik',
+                profile: targetProfile,
+                fromMe: true,
+                messageText: cleanedText,
+                msg,
+                contextManager: this.contextManager,
+                queueDir: this.askQueueDir,
+                addLog: this.addLog
+              });
+              if (handledOwnerInstant) continue;
+            } else {
+              await this.sendTrackedMessage(
+                remoteJid,
+                { text: 'Perintah `!acep` dan `!ask` hanya berlaku di ruang chat kontak terdaftar ya.' },
+                { quoted: msg }
+              );
+              continue;
+            }
+          }
+
           if (isRecognizedUtilityCmd) {
             await handleUtilityCommands({
               waSocket: this.waSocket,
               sendTrackedMessage: (jid, content, opts) => this.sendTrackedMessage(jid, content, opts),
               downloadMediaBuffer: (target) => this.downloadMediaBuffer(target),
+              isOwnUserJid: (jid) => this.isOwnUserJid(jid),
+              isOwnMessageId: (id) => Boolean(id && this.sentMessageIds.has(id)),
               remoteJid,
               senderKey: 'owner',
               fromMe: true,
@@ -731,6 +835,8 @@ class BaileysService {
               waSocket: this.waSocket,
               sendTrackedMessage: (jid, content, opts) => this.sendTrackedMessage(jid, content, opts),
               downloadMediaBuffer: (target) => this.downloadMediaBuffer(target),
+              isOwnUserJid: (jid) => this.isOwnUserJid(jid),
+              isOwnMessageId: (id) => Boolean(id && this.sentMessageIds.has(id)),
               remoteJid,
               senderKey: groupSenderKey,
               fromMe: false,
@@ -756,26 +862,26 @@ class BaileysService {
         // Event 'append' lawan bicara hanya boleh memicu perintah (! / .), bukan balasan AI biasa
         if (isAppend && !cleanedText.startsWith('!') && !isRecognizedUtilityCmd) continue;
 
-        const altJid = msg.key.remoteJidAlt || msg.key.senderPn || '';
+        const senderJid = isGroup ? msg.key.participant || remoteJid : remoteJid;
+        const altJid = isGroup ? msg.key.participantAlt || '' : msg.key.remoteJidAlt || msg.key.senderPn || '';
         const senderPushName = msg.pushName || '';
         if (!isGroup) {
           this.contextManager.recordContactJid(remoteJid, altJid);
         }
-        const profile = this.contextManager.getContactProfile(
-          isGroup ? msg.key.participant || remoteJid : remoteJid,
-          senderPushName,
-          isGroup ? msg.key.participantAlt || '' : altJid
-        );
+        const profile = this.contextManager.getContactProfile(senderJid, senderPushName, altJid);
         const senderPhone = profile.phone;
+        const historyKey = isGroup ? `group:${remoteJid.replace(/@.*$/, '')}` : senderPhone;
 
         // 3a. Evaluasi perintah instan bawaan (!ask dan !acep) SEBELUM gate whitelist & vision stiker
         if (cleanedText.length > 0) {
           const handled = await handleInstantCommands({
             waSocket: this.waSocket,
+            sendTrackedMessage: (jid, content, opts) => this.sendTrackedMessage(jid, content, opts),
             remoteJid,
             senderPhone,
             senderPushName,
             profile,
+            fromMe: false,
             messageText: cleanedText,
             msg,
             contextManager: this.contextManager,
@@ -791,6 +897,8 @@ class BaileysService {
               waSocket: this.waSocket,
               sendTrackedMessage: (jid, content, opts) => this.sendTrackedMessage(jid, content, opts),
               downloadMediaBuffer: (target) => this.downloadMediaBuffer(target),
+              isOwnUserJid: (jid) => this.isOwnUserJid(jid),
+              isOwnMessageId: (id) => Boolean(id && this.sentMessageIds.has(id)),
               remoteJid,
               senderKey: senderPhone || remoteJid,
               fromMe: false,
@@ -811,16 +919,15 @@ class BaileysService {
         // Jangan teruskan event 'append' ke balasan otomatis Artificial Intelligence
         if (isAppend) continue;
 
-        const allowed = this.contextManager.shouldReply(remoteJid, settings.whitelistOnly, altJid);
+        const allowed = this.contextManager.shouldReply(senderJid, settings.whitelistOnly, altJid);
         if (!allowed) {
           const skipText = isSticker ? '[Lawan bicara mengirim stiker WhatsApp]' : messageText;
+          // Hindari menyimpan isi lengkap pesan kontak saat AI OFF di activityLogs (DATA-04)
           this.addLog('info', `Pesan dari ${profile.name} (${senderPhone}) dilewati (AI nonaktif / bukan whitelist).`, {
             sender: profile.name,
-            pushName: senderPushName,
-            phone: senderPhone,
-            message: skipText
+            phone: senderPhone
           });
-          if (profile.category === 'pacar' || profile.category === 'teman_dekat') {
+          if (!isGroup && (profile.category === 'pacar' || profile.category === 'teman_dekat')) {
             this.contextManager.addMessage(senderPhone, 'user', skipText, {
               senderName: profile.name,
               pushName: senderPushName,
@@ -832,21 +939,26 @@ class BaileysService {
           continue;
         }
 
-        // Unduh & analisis visual stiker hanya untuk kontak yang benar-benar diizinkan
+        // Unduh & analisis visual stiker hanya untuk kontak yang diizinkan dan ukuran <= 2 Megabyte (SEC-05)
         if (isSticker) {
           let stickerDescription = '';
-          try {
-            const stickerBuffer = await this.downloadMediaBuffer(msg);
-            if (stickerBuffer && stickerBuffer.length > 0) {
-              stickerDescription = await this.llm.describeImage(stickerBuffer, 'image/webp');
+          const declaredStickerBytes = parseFileLength(normalizedMessage?.stickerMessage?.fileLength);
+          if (declaredStickerBytes > MAX_AUTO_VISION_STICKER_BYTES) {
+            this.addLog('warn', `Stiker dari ${profile.name} melewati batas 2 Megabyte (${declaredStickerBytes} byte); dilewati dari analisis Vision.`);
+          } else {
+            try {
+              const stickerBuffer = await this.downloadMediaBuffer(msg);
+              if (stickerBuffer && stickerBuffer.length > 0 && stickerBuffer.length <= MAX_AUTO_VISION_STICKER_BYTES) {
+                stickerDescription = await this.llm.describeImage(stickerBuffer, 'image/webp');
+              }
+            } catch (dlErr) {
+              console.warn('[Sticker Download Warning]:', dlErr.message);
             }
-          } catch (dlErr) {
-            console.warn('[Sticker Download Warning]:', dlErr.message);
           }
 
           if (stickerDescription) {
             messageText = `[Lawan bicara mengirim stiker WhatsApp: "${stickerDescription}"]`;
-            this.addLog('info', `🖼️ Stiker Terdeteksi Visual: "${stickerDescription}"`);
+            this.addLog('info', `🖼️ Stiker Terdeteksi Visual: "${stickerDescription.slice(0, 120)}"`);
           } else {
             messageText = '[Lawan bicara mengirim stiker WhatsApp]';
           }
@@ -854,21 +966,26 @@ class BaileysService {
 
         if (!messageText || messageText.trim().length === 0) continue;
 
-        this.addLog('incoming', `Pesan Masuk dari ${profile.name} [${senderPushName || senderPhone}]: "${messageText}"`, {
+        this.addLog('incoming', `Pesan Masuk dari ${profile.name} [${senderPushName || senderPhone}]: "${messageText.slice(0, 140)}"`, {
           sender: profile.name,
           pushName: senderPushName,
           phone: senderPhone,
           category: profile.category
         });
 
-        this.contextManager.addMessage(senderPhone, 'user', messageText, {
-          senderName: profile.name,
-          pushName: senderPushName,
-          phone: senderPhone,
-          category: profile.category
+        // Pencatatan ke chat_memory dilakukan saat batch diproses di processBurstReply (BUG-01)
+        this.queueBurstMessage({
+          remoteJid,
+          senderJid,
+          altJid,
+          isGroup,
+          historyKey,
+          senderPhone,
+          senderPushName,
+          profile,
+          messageText,
+          msg
         });
-
-        this.queueBurstMessage({ remoteJid, altJid, senderPhone, senderPushName, profile, messageText, msg });
       }
     } catch (err) {
       this.addLog('error', `Error processing message: ${err.message}`);
