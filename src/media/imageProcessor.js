@@ -14,12 +14,19 @@ const { promisify } = require('util');
 const execFileAsync = promisify(execFile);
 
 // Di Linux (seperti Muse Virtual Machine), daftarkan folder assets/fonts agar font cadangan
-// Anton (lisensi SIL Open Font License 1.1) terbaca otomatis oleh Fontconfig/librsvg.
+// Anton (lisensi SIL Open Font License 1.1) terbaca otomatis oleh Fontconfig/librsvg,
+// sambil tetap mempertahankan FONTCONFIG_PATH sistem (/etc/fonts) agar font sistem seperti
+// Impact juga terbaca oleh libfontconfig bawaan biner Sharp.
 // Di Windows, sistem memakai font bawaan C:\Windows\Fonts (Impact & Arial Narrow).
-if (process.platform !== 'win32' && !process.env.FONTCONFIG_FILE) {
-  const localFontsConf = path.resolve(__dirname, '../../assets/fonts/fonts.conf');
-  if (fs.existsSync(localFontsConf)) {
-    process.env.FONTCONFIG_FILE = localFontsConf;
+if (process.platform !== 'win32') {
+  if (!process.env.FONTCONFIG_PATH && fs.existsSync('/etc/fonts')) {
+    process.env.FONTCONFIG_PATH = '/etc/fonts';
+  }
+  if (!process.env.FONTCONFIG_FILE) {
+    const localFontsConf = path.resolve(__dirname, '../../assets/fonts/fonts.conf');
+    if (fs.existsSync(localFontsConf)) {
+      process.env.FONTCONFIG_FILE = localFontsConf;
+    }
   }
 }
 
@@ -892,8 +899,8 @@ function buildSingleImpactSvgLine(lineText, { centerX, y, fontSize, strokeWidth 
   const fontFamily = "'Impact', 'Anton', 'Arial Black', sans-serif";
   const escaped = escapeXml(lineText);
   return [
-    `<text x="${centerX}" y="${Math.round(y)}" text-anchor="middle" fill="none" stroke="#000000" stroke-width="${strokeWidth}" stroke-linejoin="round" stroke-linecap="round" font-family="${fontFamily}" font-size="${fontSize}" font-weight="900">${escaped}</text>`,
-    `<text x="${centerX}" y="${Math.round(y)}" text-anchor="middle" fill="#ffffff" stroke="none" font-family="${fontFamily}" font-size="${fontSize}" font-weight="900">${escaped}</text>`
+    `<text x="${centerX}" y="${Math.round(y)}" text-anchor="middle" fill="none" stroke="#000000" stroke-width="${strokeWidth}" stroke-linejoin="round" stroke-linecap="round" font-family="${fontFamily}" font-size="${fontSize}" font-weight="400">${escaped}</text>`,
+    `<text x="${centerX}" y="${Math.round(y)}" text-anchor="middle" fill="#ffffff" stroke="none" font-family="${fontFamily}" font-size="${fontSize}" font-weight="400">${escaped}</text>`
   ].join('\n  ');
 }
 
@@ -1085,8 +1092,8 @@ async function renderMixedImpactLineStrip({
         const escaped = escapeXml(core);
         const segSvg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg width="${estW}" height="${stripHeight}" viewBox="0 0 ${estW} ${stripHeight}" xmlns="http://www.w3.org/2000/svg">
-  <text x="${pad * 2}" y="${baselineOffsetY}" text-anchor="start" fill="none" stroke="#000000" stroke-width="${strokeWidth}" stroke-linejoin="round" stroke-linecap="round" font-family="${fontFamily}" font-size="${fontSize}" font-weight="900">${escaped}</text>
-  <text x="${pad * 2}" y="${baselineOffsetY}" text-anchor="start" fill="#ffffff" stroke="none" font-family="${fontFamily}" font-size="${fontSize}" font-weight="900">${escaped}</text>
+  <text x="${pad * 2}" y="${baselineOffsetY}" text-anchor="start" fill="none" stroke="#000000" stroke-width="${strokeWidth}" stroke-linejoin="round" stroke-linecap="round" font-family="${fontFamily}" font-size="${fontSize}" font-weight="400">${escaped}</text>
+  <text x="${pad * 2}" y="${baselineOffsetY}" text-anchor="start" fill="#ffffff" stroke="none" font-family="${fontFamily}" font-size="${fontSize}" font-weight="400">${escaped}</text>
 </svg>`;
         const rendered = await sharp(Buffer.from(segSvg, 'utf-8')).ensureAlpha().png().toBuffer();
         const { data, info } = await sharp(rendered)
