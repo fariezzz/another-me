@@ -12,6 +12,7 @@
  */
 
 const { normalizeMessageContent } = require('@whiskeysockets/baileys');
+const { getStickerAudioMessage, getRawWireFieldNumbers } = require('./audioStickerCodec');
 const {
   MAX_MEDIA_BYTES,
   MAX_VIDEO_INPUT_SECONDS,
@@ -52,6 +53,7 @@ const COMMAND_ALIAS_GROUPS = {
   text: ['text', 'teks', 'txt'],
   stext: ['stext', 'steks', 'stxt', 'brat', 'sbrat', 'st'],
   cap: ['cap', 'caption', 'burem', 'blurcap'],
+  caphd: ['caphd', 'capclean', 'capclear', 'hdcap', 'meme', 'memecap'],
   cuaca: ['cuaca', 'weather', 'suhu'],
   jam: ['jam', 'waktu', 'time', 'tanggal', 'tgl'],
   pilih: ['pilih', 'pick', 'choose', 'acak', 'random']
@@ -64,7 +66,7 @@ for (const [canonical, aliases] of Object.entries(COMMAND_ALIAS_GROUPS)) {
   }
 }
 
-const MEDIA_COMMANDS = new Set(['sticker', 'toimg', 'wm', 'crop', 'text', 'stext', 'cap']);
+const MEDIA_COMMANDS = new Set(['sticker', 'toimg', 'wm', 'crop', 'text', 'stext', 'cap', 'caphd']);
 
 /**
  * Membuka seluruh lapisan pembungkus pesan WhatsApp Baileys v7 secara rekursif,
@@ -228,11 +230,17 @@ function inspectMediaInContent(content) {
     };
   }
   if (content.stickerMessage) {
+    const rawStkFields = getRawWireFieldNumbers(content.stickerMessage);
     return {
       kind: 'sticker',
       mimeType: content.stickerMessage.mimetype || 'image/webp',
       fileLength: parseFileLength(content.stickerMessage.fileLength),
-      isAnimated: Boolean(content.stickerMessage.isAnimated)
+      isAnimated: Boolean(content.stickerMessage.isAnimated),
+      fileSha256: content.stickerMessage.fileSha256 || null,
+      fileEncSha256: content.stickerMessage.fileEncSha256 || null,
+      directPath: String(content.stickerMessage.directPath || ''),
+      hasSoundMarkerField24: Boolean(Array.isArray(rawStkFields) && rawStkFields.includes(24)),
+      audioMessage: getStickerAudioMessage(content.stickerMessage)
     };
   }
   if (content.videoMessage) {
@@ -377,7 +385,7 @@ function buildMenuText({ showOwnerCommands = false, isOwner = false } = {}) {
     '_Semua perintah di bawah ini bisa memakai awalan `!` maupun `.` (contoh: `!s` atau `.s`)._',
     '',
     '*Media & Stiker:*',
-    '- `!sticker` (`stiker`, `s`, `stk`) — ubah foto, GIF, atau video pendek (<= 15 detik) jadi stiker statis/bergerak (tambah `crop` untuk potong penuh 1:1)',
+    '- `!sticker` (`stiker`, `s`, `stk`) — ubah foto, GIF, atau video pendek (<= 15 detik) jadi stiker statis/bergerak; video bersuara otomatis mempertahankan audio aslinya (tambah `crop` untuk potong 1:1, `mute` untuk hilangkan suara)',
     '- `!toimg` (`toimage`, `togif`, `img`, `gambar`, `foto`) — ubah stiker (balas stiker) jadi gambar, atau GIF bila stiker bergerak',
     '- `!wm <paket> | <pembuat>` (`steal`, `watermark`, `take`) — ganti nama paket & pembuat pada stiker yang dibalas',
     '- `!crop` (`potong`, `square`, `kotak`) — potong foto, video, atau GIF menjadi kotak 1:1 tepat di tengah',
@@ -386,6 +394,7 @@ function buildMenuText({ showOwnerCommands = false, isOwner = false } = {}) {
     '- `!text <teks>` (`teks`, `txt`) — gambar latar putih teks hitam blur tipis',
     '- `!stext <teks>` (`steks`, `stxt`, `brat`, `sbrat`, `st`) — sama seperti `!text`, langsung jadi stiker',
     '- `!cap <atas> | <bawah>` (`caption`, `burem`, `blurcap`) — beri teks Impact kapital + emoji berwarna bergaya meme burik pada foto, video (<= 45 detik), GIF, atau stiker diam/bergerak (1 teks otomatis di bawah)',
+    '- `!caphd <atas> | <bawah>` (`capclean`, `capclear`, `hdcap`, `meme`, `memecap`) — sama seperti `!cap`, tetapi jernih tanpa proses pemburikan pada foto, video (<= 45 detik), GIF, atau stiker diam/bergerak',
     '',
     '*Utilitas Harian:*',
     '- `!cuaca [kota]` (`weather`, `suhu`) — cek cuaca terkini (bawaan: Tasikmalaya)',
@@ -456,6 +465,43 @@ async function downloadValidatedMediaBuffer(candidate, downloadMediaBuffer) {
 }
 
 /**
+ * Mencoba mengambil trek audio OGG/Opus dari Stiker Suara yang dibalas agar
+ * perintah `!cap`, `!caphd`, dan `!wm` tidak menghilangkan suara asli stiker.
+ */
+async function resolvePreservedStickerAudio(candidate, { resolveStickerAudio, downloadMediaBuffer } = {}) {
+  if (!candidate || candidate.kind !== 'sticker') return null;
+
+  if (typeof resolveStickerAudio === 'function') {
+    try {
+      const resolved = await resolveStickerAudio(candidate);
+      if (resolved && Buffer.isBuffer(resolved.audioBuffer) && resolved.audioBuffer.length > 0) {
+        return {
+          audioBuffer: resolved.audioBuffer,
+          audioSeconds: Math.max(1, Math.round(Number(resolved.audioSeconds) || 5))
+        };
+      }
+    } catch {}
+  }
+
+  if (candidate.audioMessage && typeof downloadMediaBuffer === 'function' && candidate.targetMsg?.key) {
+    try {
+      const audioBuffer = await downloadMediaBuffer({
+        key: candidate.targetMsg.key,
+        message: { audioMessage: candidate.audioMessage }
+      });
+      if (Buffer.isBuffer(audioBuffer) && audioBuffer.length > 0) {
+        return {
+          audioBuffer,
+          audioSeconds: Math.max(1, Math.round(Number(candidate.audioMessage.seconds) || 5))
+        };
+      }
+    } catch {}
+  }
+
+  return null;
+}
+
+/**
  * Menjalankan router perintah utilitas WhatsApp.
  * Mengembalikan true jika pesan cocok dengan salah satu perintah utilitas
  * (baik dieksekusi maupun ditahan anti-spam) agar tidak jatuh ke balasan Artificial Intelligence (AI).
@@ -464,6 +510,7 @@ async function handleUtilityCommands({
   waSocket,
   sendTrackedMessage,
   downloadMediaBuffer,
+  resolveStickerAudio,
   isOwnUserJid,
   isOwnMessageId,
   remoteJid,
@@ -612,29 +659,59 @@ async function handleUtilityCommands({
 
         const argsLower = parsed.args.toLowerCase();
         const useCrop = /\b(crop|full|potong)\b/.test(argsLower);
-        const wmSource = parsed.args.replace(/\b(crop|full|potong)\b/gi, '').trim();
+        const muteAudio = /\b(mute|bisu|nosound|tanpasuara)\b/.test(argsLower);
+        const wmSource = parsed.args
+          .replace(/\b(crop|full|potong|mute|bisu|nosound|tanpasuara)\b/gi, '')
+          .trim();
         const { packName, author } = parseWatermarkArgs(wmSource);
 
         const isAnimatedCandidate =
           candidate.kind === 'video' || String(candidate.mimeType || '').toLowerCase() === 'image/gif';
+        const wantVideoAudio =
+          candidate.kind === 'video' && !candidate.gifPlayback && !muteAudio;
 
-        const stickerBuffer = await runMediaJob(async () => {
+        const stickerResult = await runMediaJob(async () => {
           const mediaBuffer = await downloadValidatedMediaBuffer(candidate, downloadMediaBuffer);
           if (isAnimatedCandidate) {
-            return await convertVideoOrGifToSticker(mediaBuffer, {
+            if (wantVideoAudio) {
+              return await convertVideoOrGifToSticker(mediaBuffer, {
+                crop: useCrop,
+                packName,
+                author,
+                includeAudio: true
+              });
+            }
+            const buf = await convertVideoOrGifToSticker(mediaBuffer, {
               crop: useCrop,
               packName,
-              author
+              author,
+              includeAudio: false
             });
+            return { stickerBuffer: buf, audioBuffer: null, audioSeconds: 0, hasAudio: false };
           }
-          return await convertImageToSticker(mediaBuffer, { crop: useCrop, packName, author });
+          const buf = await convertImageToSticker(mediaBuffer, { crop: useCrop, packName, author });
+          return { stickerBuffer: buf, audioBuffer: null, audioSeconds: 0, hasAudio: false };
         });
 
-        await replyFn({ sticker: stickerBuffer });
-        addLog(
-          'info',
-          `Perintah ${parsed.trigger} berhasil mengirim stiker${isAnimatedCandidate ? ' bergerak' : ''} untuk ${actorLabel}.`
-        );
+        if (stickerResult.hasAudio && stickerResult.audioBuffer) {
+          await replyFn({
+            sticker: stickerResult.stickerBuffer,
+            audioSticker: {
+              audioBuffer: stickerResult.audioBuffer,
+              audioSeconds: stickerResult.audioSeconds
+            }
+          });
+          addLog(
+            'info',
+            `Perintah ${parsed.trigger} berhasil mengirim stiker suara (${stickerResult.audioSeconds} detik) untuk ${actorLabel}.`
+          );
+        } else {
+          await replyFn({ sticker: stickerResult.stickerBuffer });
+          addLog(
+            'info',
+            `Perintah ${parsed.trigger} berhasil mengirim stiker${isAnimatedCandidate ? ' bergerak' : ''} untuk ${actorLabel}.`
+          );
+        }
         return true;
       }
 
@@ -688,13 +765,30 @@ async function handleUtilityCommands({
         }
 
         const { packName, author } = parseWatermarkArgs(parsed.args);
-        const updatedSticker = await runMediaJob(async () => {
+        const wmOutcome = await runMediaJob(async () => {
           const webpBuffer = await downloadValidatedMediaBuffer(candidate, downloadMediaBuffer);
-          return await rewriteStickerExif(webpBuffer, { packName, author });
+          const updatedSticker = await rewriteStickerExif(webpBuffer, { packName, author });
+          const preservedAudio = await resolvePreservedStickerAudio(candidate, {
+            resolveStickerAudio,
+            downloadMediaBuffer
+          });
+          return { sticker: updatedSticker, audioSticker: preservedAudio };
         });
 
-        await replyFn({ sticker: updatedSticker });
-        addLog('info', `Perintah ${parsed.trigger} memperbarui metadata stiker (${packName} | ${author}) untuk ${actorLabel}.`);
+        await replyFn(
+          wmOutcome.audioSticker
+            ? { sticker: wmOutcome.sticker, audioSticker: wmOutcome.audioSticker }
+            : { sticker: wmOutcome.sticker }
+        );
+        if (!wmOutcome.audioSticker && candidate.hasSoundMarkerField24) {
+          await replyFn({
+            text: '_Catatan: WhatsApp memangkas data suara saat membalas stiker lama yang belum pernah terekam bot. Kirim ulang stiker bersuara tersebut sekali dulu, lalu balas lagi dengan perintah ini agar suaranya tetap terbawa._'
+          });
+        }
+        addLog(
+          'info',
+          `Perintah ${parsed.trigger} memperbarui metadata stiker${wmOutcome.audioSticker ? ' suara' : ''} (${packName} | ${author}) untuk ${actorLabel}.`
+        );
         return true;
       }
 
@@ -807,11 +901,14 @@ async function handleUtilityCommands({
         return true;
       }
 
-      case 'cap': {
+      case 'cap':
+      case 'caphd': {
+        const isCleanCap = parsed.command === 'caphd';
+        const cmdLabel = isCleanCap ? '!caphd' : '!cap';
         const { topText, bottomText } = parseCapArgs(parsed.args);
         if (!topText && !bottomText) {
           await replyFn({
-            text: 'Pakai: kirim foto, video, atau GIF dengan caption `!cap <teks atas> | <teks bawah>` (atau `.cap`), atau balas foto, video, GIF, maupun stiker dengan perintah tersebut. Kalau cuma 1 teks, otomatis ditaruh di bawah ya.'
+            text: `Pakai: kirim foto, video, atau GIF dengan caption \`${cmdLabel} <teks atas> | <teks bawah>\` (atau \`.${cmdLabel.slice(1)}\`), atau balas foto, video, GIF, maupun stiker dengan perintah tersebut. Kalau cuma 1 teks, otomatis ditaruh di bawah ya.`
           });
           return true;
         }
@@ -819,7 +916,7 @@ async function handleUtilityCommands({
         const candidate = extractMediaCandidate(msg, normalizedMessage, mediaLookupOpts);
         if (!candidate) {
           await replyFn({
-            text: 'Medianya belum ada. Kirim foto, video, atau GIF dengan caption `!cap <teks atas> | <teks bawah>` atau balas sebuah foto, video, GIF, maupun stiker ya.'
+            text: `Medianya belum ada. Kirim foto, video, atau GIF dengan caption \`${cmdLabel} <teks atas> | <teks bawah>\` atau balas sebuah foto, video, GIF, maupun stiker ya.`
           });
           return true;
         }
@@ -830,19 +927,40 @@ async function handleUtilityCommands({
           return true;
         }
         if (candidate.kind === 'sticker') {
-          const stickerBuffer = await runMediaJob(async () => {
+          const stickerOutcome = await runMediaJob(async () => {
             const webpBuffer = await downloadValidatedMediaBuffer(candidate, downloadMediaBuffer);
-            return await renderCapSticker(webpBuffer, { topText, bottomText });
+            const stickerBuffer = await renderCapSticker(webpBuffer, {
+              topText,
+              bottomText,
+              clean: isCleanCap
+            });
+            const preservedAudio = await resolvePreservedStickerAudio(candidate, {
+              resolveStickerAudio,
+              downloadMediaBuffer
+            });
+            return { sticker: stickerBuffer, audioSticker: preservedAudio };
           });
 
-          await replyFn({ sticker: stickerBuffer });
-          addLog('info', `Perintah ${parsed.trigger} pada stiker selesai dibuat untuk ${actorLabel}.`);
+          await replyFn(
+            stickerOutcome.audioSticker
+              ? { sticker: stickerOutcome.sticker, audioSticker: stickerOutcome.audioSticker }
+              : { sticker: stickerOutcome.sticker }
+          );
+          if (!stickerOutcome.audioSticker && candidate.hasSoundMarkerField24) {
+            await replyFn({
+              text: `_Catatan: WhatsApp memangkas data suara saat membalas stiker lama yang belum pernah terekam bot. Kirim ulang stiker bersuara tersebut sekali dulu, lalu balas lagi dengan \`${cmdLabel}\` agar suaranya tetap terbawa._`
+            });
+          }
+          addLog(
+            'info',
+            `Perintah ${parsed.trigger} pada stiker${stickerOutcome.audioSticker ? ' suara' : ''} selesai dibuat untuk ${actorLabel}.`
+          );
           return true;
         }
         if (candidate.kind === 'video') {
           if (candidate.seconds > MAX_CAP_VIDEO_SECONDS) {
             await replyFn({
-              text: `Maaf, durasi videonya terlalu panjang (${candidate.seconds} detik, maksimal ${MAX_CAP_VIDEO_SECONDS} detik) untuk diberi caption !cap. Potong dulu videonya lebih singkat ya.`
+              text: `Maaf, durasi videonya terlalu panjang (${candidate.seconds} detik, maksimal ${MAX_CAP_VIDEO_SECONDS} detik) untuk diberi caption ${cmdLabel}. Potong dulu videonya lebih singkat ya.`
             });
             return true;
           }
@@ -852,7 +970,8 @@ async function handleUtilityCommands({
             return await renderCapVideoOrGif(mediaBuffer, {
               topText,
               bottomText,
-              asGif: Boolean(candidate.gifPlayback)
+              asGif: Boolean(candidate.gifPlayback),
+              clean: isCleanCap
             });
           });
 
@@ -868,7 +987,7 @@ async function handleUtilityCommands({
         }
         if (candidate.kind !== 'image') {
           await replyFn({
-            text: 'Maaf, perintah `!cap` hanya menerima foto, video, GIF, atau stiker (bukan audio atau dokumen non-media). Coba kirim atau balas foto, video, GIF, atau stiker ya.'
+            text: `Maaf, perintah \`${cmdLabel}\` hanya menerima foto, video, GIF, atau stiker (bukan audio atau dokumen non-media). Coba kirim atau balas foto, video, GIF, atau stiker ya.`
           });
           return true;
         }
@@ -882,12 +1001,17 @@ async function handleUtilityCommands({
               const gifRes = await renderCapVideoOrGif(mediaBuffer, {
                 topText,
                 bottomText,
-                asGif: true
+                asGif: true,
+                clean: isCleanCap
               });
               return { kind: 'gif', buffer: gifRes.buffer };
             }
           }
-          const memeBuffer = await renderCapMeme(mediaBuffer, { topText, bottomText });
+          const memeBuffer = await renderCapMeme(mediaBuffer, {
+            topText,
+            bottomText,
+            clean: isCleanCap
+          });
           return { kind: 'image', buffer: memeBuffer };
         });
 

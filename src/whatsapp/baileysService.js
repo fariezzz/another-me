@@ -25,6 +25,13 @@ function buildProxyAgent() {
 const { renderQrToSvg } = require('../utils/atomicFile');
 const { handleInstantCommands, parseAskCommand, parseAcepCommand } = require('./commandRouter');
 const { extractQuotedText } = require('./askMediaHelper');
+const {
+  installAudioStickerProtoPatch,
+  sendAudioSticker,
+  getStickerAudioMessage,
+  getRawWireFieldNumbers
+} = require('./audioStickerCodec');
+const { SoundStickerStore } = require('./soundStickerStore');
 const { CommandAntiSpamGuard } = require('./commandAntiSpam');
 const {
   unwrapWhatsAppMessage,
@@ -198,11 +205,25 @@ class BaileysService {
     // Antrean burst berada di level instans layanan agar konsisten lintas reconnect
     this.pendingBursts = new Map();
 
+    // Pasang patch Protobuf Stiker Suara (field 134) agar bot bisa mengirim & menerima stiker bersuara
+    installAudioStickerProtoPatch();
+
     // Pengaman anti-loop untuk pesan keluar bot sendiri (penting saat fromMe: true diproses)
     this.sentMessageIds = new Set();
 
     // Pengaman deduplikasi pesan !ask (mencegah event notify + append ganda mengantrekan 2 kali)
     this.processedAskMessageIds = new Set();
+
+    // Cache metadata & buffer audio Stiker Suara terbaru (memori + disk data/sound-sticker-cache/)
+    // agar !cap / !caphd / !wm tetap mempertahankan suara meski quotedMessage dipangkas klien WhatsApp
+    // dan tetap bertahan meskipun bot di-restart.
+    this.soundStickerCache = new Map();
+    this.soundStickerBufferKeys = [];
+    this.soundStickerStore =
+      options.soundStickerStore ||
+      new SoundStickerStore({
+        cacheDir: options.soundStickerCacheDir
+      });
 
     // Pelindung anti-spam berlapis untuk perintah utilitas WhatsApp
     this.commandAntiSpam =
@@ -210,6 +231,241 @@ class BaileysService {
       new CommandAntiSpamGuard({
         addLog: this.addLog
       });
+  }
+
+  encodeShaKey(rawSha) {
+    if (!rawSha) return '';
+    if (typeof rawSha === 'string') return rawSha;
+    if (rawSha instanceof Uint8Array || Buffer.isBuffer(rawSha)) {
+      return Buffer.from(rawSha).toString('base64');
+    }
+    return '';
+  }
+
+  rememberSoundSticker({
+    messageId,
+    fileSha256,
+    fileEncSha256 = null,
+    directPath = '',
+    audioMessage = null,
+    audioBuffer = null,
+    audioSeconds = 0,
+    messageKey = null
+  }) {
+    const keys = [];
+    if (messageId) keys.push(`id:${messageId}`);
+    const shaKey = this.encodeShaKey(fileSha256);
+    if (shaKey) keys.push(`sha:${shaKey}`);
+    const encShaKey = this.encodeShaKey(fileEncSha256);
+    if (encShaKey) keys.push(`enc:${encShaKey}`);
+    const dPath = String(directPath || '').trim();
+    if (dPath) keys.push(`path:${dPath}`);
+    if (keys.length === 0) return;
+
+    const now = Date.now();
+    const keepBuf = Buffer.isBuffer(audioBuffer) && audioBuffer.length > 0 && audioBuffer.length <= 1024 * 1024;
+    const safeSeconds = Math.max(0, Math.round(Number(audioSeconds || audioMessage?.seconds || 0)));
+    const entry = {
+      audioMessage: audioMessage || null,
+      audioBuffer: keepBuf ? audioBuffer : null,
+      audioSeconds: safeSeconds,
+      messageKey: messageKey || null,
+      expiresAt: now + 24 * 60 * 60 * 1000
+    };
+
+    for (const k of keys) {
+      this.soundStickerCache.delete(k);
+      this.soundStickerCache.set(k, entry);
+      if (keepBuf) {
+        this.soundStickerBufferKeys.push(k);
+      }
+    }
+
+    if (keepBuf && this.soundStickerStore) {
+      try {
+        this.soundStickerStore.save({
+          messageId,
+          fileSha256,
+          fileEncSha256,
+          directPath: dPath,
+          audioBuffer,
+          audioSeconds: safeSeconds || 5
+        });
+      } catch {}
+    }
+
+    // Batasi jumlah buffer audio di RAM maksimal 30 entri agar pemakaian memori tetap kecil
+    while (this.soundStickerBufferKeys.length > 30) {
+      const oldBufKey = this.soundStickerBufferKeys.shift();
+      const oldEntry = this.soundStickerCache.get(oldBufKey);
+      if (oldEntry) oldEntry.audioBuffer = null;
+    }
+
+    // Batasi total entri metadata cache maksimal 200 kunci
+    while (this.soundStickerCache.size > 200) {
+      const oldestKey = this.soundStickerCache.keys().next().value;
+      if (oldestKey === undefined) break;
+      this.soundStickerCache.delete(oldestKey);
+    }
+  }
+
+  lookupSoundStickerCache({ messageId, fileSha256, fileEncSha256 = null, directPath = '' }) {
+    const now = Date.now();
+    const candidates = [];
+    if (messageId) candidates.push(`id:${messageId}`);
+    const shaKey = this.encodeShaKey(fileSha256);
+    if (shaKey) candidates.push(`sha:${shaKey}`);
+    const encShaKey = this.encodeShaKey(fileEncSha256);
+    if (encShaKey) candidates.push(`enc:${encShaKey}`);
+    const dPath = String(directPath || '').trim();
+    if (dPath) candidates.push(`path:${dPath}`);
+
+    for (const k of candidates) {
+      const entry = this.soundStickerCache.get(k);
+      if (!entry) continue;
+      if (entry.expiresAt <= now) {
+        this.soundStickerCache.delete(k);
+        continue;
+      }
+      return entry;
+    }
+    return null;
+  }
+
+  cacheIncomingSoundStickerAudioAsync({ msgKey, stickerMessage, audioMessage }) {
+    if (!audioMessage || !msgKey || !this.soundStickerStore) return;
+    // Jika berkas audio untuk stiker ini sudah ada di disk, cukup perbarui pemetaan indeksnya
+    const existingDisk = this.soundStickerStore.find({
+      messageId: msgKey.id,
+      fileSha256: stickerMessage?.fileSha256,
+      fileEncSha256: stickerMessage?.fileEncSha256,
+      directPath: stickerMessage?.directPath
+    });
+    if (existingDisk) {
+      try {
+        this.soundStickerStore.save({
+          messageId: msgKey.id,
+          fileSha256: stickerMessage?.fileSha256,
+          fileEncSha256: stickerMessage?.fileEncSha256,
+          directPath: stickerMessage?.directPath,
+          audioBuffer: existingDisk.audioBuffer,
+          audioSeconds: existingDisk.audioSeconds
+        });
+      } catch {}
+      return;
+    }
+
+    // Unduh klip audio kecil (~20-60 KB) di latar belakang selagi tautan CDN WhatsApp masih segar
+    this.downloadMediaBuffer({
+      key: msgKey,
+      message: { audioMessage }
+    })
+      .then((audioBuffer) => {
+        if (!Buffer.isBuffer(audioBuffer) || audioBuffer.length === 0) return;
+        this.rememberSoundSticker({
+          messageId: msgKey.id,
+          fileSha256: stickerMessage?.fileSha256,
+          fileEncSha256: stickerMessage?.fileEncSha256,
+          directPath: stickerMessage?.directPath,
+          audioMessage,
+          audioBuffer,
+          audioSeconds: audioMessage.seconds || 5,
+          messageKey: msgKey
+        });
+      })
+      .catch(() => {});
+  }
+
+  async resolveSoundStickerAudio(candidate) {
+    if (!candidate || candidate.kind !== 'sticker') return null;
+
+    const lookupParams = {
+      messageId: candidate.targetMsg?.key?.id,
+      fileSha256: candidate.fileSha256,
+      fileEncSha256: candidate.fileEncSha256,
+      directPath: candidate.directPath
+    };
+
+    // Lapis 1: AudioMessage langsung dari quotedMessage (jika WhatsApp menyertakannya)
+    const directAudioMsg = candidate.audioMessage || null;
+    if (directAudioMsg && candidate.targetMsg?.key) {
+      try {
+        const audioBuffer = await this.downloadMediaBuffer({
+          key: candidate.targetMsg.key,
+          message: { audioMessage: directAudioMsg }
+        });
+        if (Buffer.isBuffer(audioBuffer) && audioBuffer.length > 0) {
+          const audioSeconds = Math.max(1, Math.round(Number(directAudioMsg.seconds) || 5));
+          this.rememberSoundSticker({
+            ...lookupParams,
+            audioMessage: directAudioMsg,
+            audioBuffer,
+            audioSeconds,
+            messageKey: candidate.targetMsg.key
+          });
+          return { audioBuffer, audioSeconds };
+        }
+      } catch (err) {
+        this.addLog('warn', `Gagal mengunduh audio stiker langsung dari quotedMessage (${err.message}); mencoba cache.`);
+      }
+    }
+
+    // Lapis 2: Cache RAM (berdasarkan stanzaId, fileSha256, fileEncSha256, atau directPath)
+    const cached = this.lookupSoundStickerCache(lookupParams);
+    if (cached) {
+      if (Buffer.isBuffer(cached.audioBuffer) && cached.audioBuffer.length > 0) {
+        return {
+          audioBuffer: cached.audioBuffer,
+          audioSeconds: Math.max(1, Math.round(Number(cached.audioSeconds) || 5))
+        };
+      }
+      if (cached.audioMessage) {
+        try {
+          const audioBuffer = await this.downloadMediaBuffer({
+            key: cached.messageKey || candidate.targetMsg?.key,
+            message: { audioMessage: cached.audioMessage }
+          });
+          if (Buffer.isBuffer(audioBuffer) && audioBuffer.length > 0) {
+            const audioSeconds = Math.max(
+              1,
+              Math.round(Number(cached.audioMessage.seconds || cached.audioSeconds) || 5)
+            );
+            this.rememberSoundSticker({
+              ...lookupParams,
+              audioMessage: cached.audioMessage,
+              audioBuffer,
+              audioSeconds,
+              messageKey: cached.messageKey || candidate.targetMsg?.key
+            });
+            return { audioBuffer, audioSeconds };
+          }
+        } catch (err) {
+          this.addLog('warn', `Gagal mengunduh audio stiker dari cache RAM (${err.message}); mencoba cache disk.`);
+        }
+      }
+    }
+
+    // Lapis 3: Cache disk persisten (bertahan lintas restart bot!)
+    if (this.soundStickerStore) {
+      const diskHit = this.soundStickerStore.find(lookupParams);
+      if (diskHit) {
+        this.addLog(
+          'info',
+          `Audio stiker suara dipulihkan dari cache disk (${diskHit.audioSeconds} detik, ${diskHit.audioBuffer.length} byte).`
+        );
+        return diskHit;
+      }
+    }
+
+    const msgFields = getRawWireFieldNumbers(candidate.targetMsg?.message);
+    const stkFields = getRawWireFieldNumbers(candidate.targetMsg?.message?.stickerMessage);
+    if (msgFields || stkFields) {
+      this.addLog(
+        'info',
+        `Diagnostik stiker dibalas: audio tidak ditemukan (stanza=${candidate.targetMsg?.key?.id || '-'}, msgFields=[${(msgFields || []).join(',')}], stkFields=[${(stkFields || []).join(',')}]).`
+      );
+    }
+    return null;
   }
 
   markAskMessageProcessed(msgId) {
@@ -233,6 +489,57 @@ class BaileysService {
   }
 
   async sendTrackedMessage(remoteJid, content, options = {}) {
+    if (
+      content &&
+      content.sticker &&
+      content.audioSticker &&
+      content.audioSticker.audioBuffer &&
+      this.waSocket &&
+      typeof this.waSocket.relayMessage === 'function' &&
+      typeof this.waSocket.waUploadToServer === 'function'
+    ) {
+      try {
+        const sent = await sendAudioSticker({
+          waSocket: this.waSocket,
+          jid: remoteJid,
+          stickerBuffer: content.sticker,
+          audioBuffer: content.audioSticker.audioBuffer,
+          audioSeconds: content.audioSticker.audioSeconds,
+          quoted: options.quoted,
+          ephemeralExpiration: options.ephemeralExpiration,
+          logger: this.logger
+        });
+        this.rememberSentMessageId(sent?.key?.id);
+        const sentStickerMsg =
+          sent?.message?.ephemeralMessage?.message?.stickerMessage ||
+          sent?.message?.stickerMessage;
+        this.rememberSoundSticker({
+          messageId: sent?.key?.id,
+          fileSha256: sentStickerMsg?.fileSha256,
+          fileEncSha256: sentStickerMsg?.fileEncSha256,
+          directPath: sentStickerMsg?.directPath,
+          audioMessage: getStickerAudioMessage(sentStickerMsg),
+          audioBuffer: content.audioSticker.audioBuffer,
+          audioSeconds: content.audioSticker.audioSeconds,
+          messageKey: sent?.key
+        });
+        this.addLog(
+          'info',
+          `Stiker suara terkirim via Protobuf bidang 134 ke ${remoteJid} (${content.audioSticker.audioSeconds || 1} detik, ${content.audioSticker.audioBuffer.length} byte audio).`
+        );
+        return sent;
+      } catch (audioErr) {
+        console.warn('[AudioSticker Fallback]:', audioErr.message);
+        this.addLog(
+          'warn',
+          `Gagal mengirim stiker suara (${audioErr.message}); beralih ke stiker bergerak standar.`
+        );
+        const sent = await this.waSocket.sendMessage(remoteJid, { sticker: content.sticker }, options);
+        this.rememberSentMessageId(sent?.key?.id);
+        return sent;
+      }
+    }
+
     const sent = await this.waSocket.sendMessage(remoteJid, content, options);
     this.rememberSentMessageId(sent?.key?.id);
     return sent;
@@ -752,6 +1059,29 @@ class BaileysService {
         const normalizedMessage = unwrapWhatsAppMessage(msg.message);
 
         const isSticker = Boolean(normalizedMessage?.stickerMessage);
+        if (isSticker) {
+          const incomingStickerAudio = getStickerAudioMessage(normalizedMessage.stickerMessage);
+          if (incomingStickerAudio) {
+            this.rememberSoundSticker({
+              messageId: msg.key.id,
+              fileSha256: normalizedMessage.stickerMessage.fileSha256,
+              fileEncSha256: normalizedMessage.stickerMessage.fileEncSha256,
+              directPath: normalizedMessage.stickerMessage.directPath,
+              audioMessage: incomingStickerAudio,
+              audioSeconds: incomingStickerAudio.seconds,
+              messageKey: msg.key
+            });
+            this.cacheIncomingSoundStickerAudioAsync({
+              msgKey: msg.key,
+              stickerMessage: normalizedMessage.stickerMessage,
+              audioMessage: incomingStickerAudio
+            });
+            this.addLog(
+              'info',
+              `Stiker suara masuk terdeteksi (${incomingStickerAudio.seconds || 0} detik, ${incomingStickerAudio.mimetype || 'audio'}) dan disimpan ke cache.`
+            );
+          }
+        }
         let messageText =
           normalizedMessage?.conversation ||
           normalizedMessage?.extendedTextMessage?.text ||
@@ -861,6 +1191,7 @@ class BaileysService {
               waSocket: this.waSocket,
               sendTrackedMessage: (jid, content, opts) => this.sendTrackedMessage(jid, content, opts),
               downloadMediaBuffer: (target) => this.downloadMediaBuffer(target),
+              resolveStickerAudio: (candidate) => this.resolveSoundStickerAudio(candidate),
               isOwnUserJid: (jid) => this.isOwnUserJid(jid),
               isOwnMessageId: (id) => Boolean(id && this.sentMessageIds.has(id)),
               remoteJid,
@@ -899,6 +1230,7 @@ class BaileysService {
               waSocket: this.waSocket,
               sendTrackedMessage: (jid, content, opts) => this.sendTrackedMessage(jid, content, opts),
               downloadMediaBuffer: (target) => this.downloadMediaBuffer(target),
+              resolveStickerAudio: (candidate) => this.resolveSoundStickerAudio(candidate),
               isOwnUserJid: (jid) => this.isOwnUserJid(jid),
               isOwnMessageId: (id) => Boolean(id && this.sentMessageIds.has(id)),
               remoteJid,
@@ -962,6 +1294,7 @@ class BaileysService {
               waSocket: this.waSocket,
               sendTrackedMessage: (jid, content, opts) => this.sendTrackedMessage(jid, content, opts),
               downloadMediaBuffer: (target) => this.downloadMediaBuffer(target),
+              resolveStickerAudio: (candidate) => this.resolveSoundStickerAudio(candidate),
               isOwnUserJid: (jid) => this.isOwnUserJid(jid),
               isOwnMessageId: (id) => Boolean(id && this.sentMessageIds.has(id)),
               remoteJid,

@@ -42,9 +42,12 @@ const {
 
 const MAX_MEDIA_BYTES = parseInt(process.env.MAX_MEDIA_BYTES, 10) || 5 * 1024 * 1024; // 5 Megabyte
 const MAX_ANIMATED_STICKER_BYTES = 500 * 1024; // 500 Kilobyte agar pasti diterima & diputar WhatsApp
+const MAX_STICKER_AUDIO_BYTES = 900 * 1024; // 900 Kilobyte (aman di bawah batas ~950 KB stiker suara WhatsApp)
 const MAX_VIDEO_INPUT_SECONDS = 15;
 const MAX_CAP_VIDEO_SECONDS = 45;
 const MAX_CROP_VIDEO_SECONDS = 60;
+const MAX_CAP_CLEAN_PHOTO_DIM = 1600;
+const MAX_CAP_CLEAN_VIDEO_DIM = 1080;
 const DEFAULT_VIDEO_STICKER_SECONDS = clampNumber(
   parseInt(process.env.MAX_VIDEO_STICKER_SECONDS, 10),
   8,
@@ -387,6 +390,86 @@ async function convertAnimatedGifWithSharp(
  * stiker bergerak WhatsApp WebP 512x512 dengan kompresi adaptif (<= 500 Kilobyte)
  * dan metadata EXIF paket stiker.
  */
+/**
+ * Memeriksa info dasar stream video (apakah memiliki trek audio & durasi dalam detik)
+ * melalui `ffmpeg -i` tanpa memerlukan biner `ffprobe`.
+ */
+async function probeVideoAudioInfo(inputPath, ffmpegPath = FFMPEG_PATH) {
+  try {
+    await execFileAsync(ffmpegPath, ['-i', inputPath], {
+      timeout: 10000,
+      maxBuffer: 1024 * 1024,
+      windowsHide: true
+    });
+    return { hasAudio: false, durationSeconds: 0 };
+  } catch (err) {
+    if (err && err.code === 'ENOENT') {
+      return { hasAudio: false, durationSeconds: 0 };
+    }
+    const stderr = String(err?.stderr || '');
+    const hasAudio = /Stream\s+#\d+:\d+[^:\n]*:\s*Audio:/i.test(stderr);
+    let durationSeconds = 0;
+    const match = stderr.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/);
+    if (match) {
+      durationSeconds =
+        (Number(match[1]) || 0) * 3600 +
+        (Number(match[2]) || 0) * 60 +
+        (Number(match[3]) || 0);
+    }
+    return { hasAudio, durationSeconds };
+  }
+}
+
+/**
+ * Mengekstrak trek audio video menjadi berkas OGG/Opus murni (`audio/ogg; codecs=opus`,
+ * tanpa stream video/sampul agar pasti diputar oleh fitur Stiker Suara WhatsApp).
+ */
+async function extractStickerOpusAudioFromFile(
+  inputPath,
+  outputPath,
+  maxDurationSec,
+  ffmpegPath = FFMPEG_PATH
+) {
+  const bitrates = ['48k', '24k'];
+  for (const bitrate of bitrates) {
+    const args = [
+      '-y',
+      '-i',
+      inputPath,
+      '-t',
+      String(maxDurationSec),
+      '-vn',
+      '-map',
+      '0:a:0',
+      '-c:a',
+      'libopus',
+      '-b:a',
+      bitrate,
+      '-ac',
+      '1',
+      '-ar',
+      '48000',
+      '-application',
+      'audio',
+      outputPath
+    ];
+
+    await execFileAsync(ffmpegPath, args, {
+      timeout: 20000,
+      maxBuffer: 2 * 1024 * 1024,
+      windowsHide: true
+    });
+
+    if (fs.existsSync(outputPath)) {
+      const audioBuf = fs.readFileSync(outputPath);
+      if (audioBuf.length > 0 && audioBuf.length <= MAX_STICKER_AUDIO_BYTES) {
+        return audioBuf;
+      }
+    }
+  }
+  return null;
+}
+
 async function convertVideoOrGifToSticker(
   inputBuffer,
   {
@@ -394,6 +477,7 @@ async function convertVideoOrGifToSticker(
     packName = DEFAULT_PACK_NAME,
     author = DEFAULT_PACK_AUTHOR,
     maxDurationSec = DEFAULT_VIDEO_STICKER_SECONDS,
+    includeAudio = false,
     ffmpegPath = FFMPEG_PATH
   } = {}
 ) {
@@ -420,6 +504,7 @@ async function convertVideoOrGifToSticker(
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'another-me-stk-'));
   const inputPath = path.join(tmpDir, `input.${detectedKind}`);
   const outputPath = path.join(tmpDir, 'output.webp');
+  const audioOutPath = path.join(tmpDir, 'audio.ogg');
 
   const encodePass = async ({ fps, quality, duration }) => {
     const vf = crop
@@ -470,6 +555,7 @@ async function convertVideoOrGifToSticker(
     ];
 
     let finalSticker = null;
+    let chosenDuration = safeDuration;
     for (const pass of passes) {
       const webpRaw = await encodePass(pass);
       finalSticker = injectWebpExif(webpRaw, {
@@ -480,19 +566,64 @@ async function convertVideoOrGifToSticker(
         hasAlpha: true
       });
       if (finalSticker.length <= MAX_ANIMATED_STICKER_BYTES) {
-        return finalSticker;
+        chosenDuration = pass.duration;
+        break;
+      }
+      finalSticker = null;
+    }
+
+    if (!finalSticker) {
+      throw new MediaValidationError(
+        'ANIMATED_TOO_LARGE',
+        'Maaf, video atau GIF ini terlalu kompleks sehingga ukuran stiker bergeraknya masih melebihi batas 500 Kilobyte WhatsApp. Coba potong durasinya lebih pendek (3-4 detik) ya.'
+      );
+    }
+
+    if (!includeAudio) {
+      return finalSticker;
+    }
+
+    let audioBuffer = null;
+    let audioSeconds = 0;
+    if (detectedKind !== 'gif') {
+      const streamInfo = await probeVideoAudioInfo(inputPath, ffmpegPath);
+      if (streamInfo.hasAudio) {
+        try {
+          audioBuffer = await extractStickerOpusAudioFromFile(
+            inputPath,
+            audioOutPath,
+            chosenDuration,
+            ffmpegPath
+          );
+          if (audioBuffer) {
+            const actualSec =
+              streamInfo.durationSeconds > 0
+                ? Math.min(streamInfo.durationSeconds, chosenDuration)
+                : chosenDuration;
+            audioSeconds = Math.max(1, Math.round(actualSec));
+          }
+        } catch {
+          audioBuffer = null;
+          audioSeconds = 0;
+        }
       }
     }
 
-    throw new MediaValidationError(
-      'ANIMATED_TOO_LARGE',
-      'Maaf, video atau GIF ini terlalu kompleks sehingga ukuran stiker bergeraknya masih melebihi batas 500 Kilobyte WhatsApp. Coba potong durasinya lebih pendek (3-4 detik) ya.'
-    );
+    return {
+      stickerBuffer: finalSticker,
+      audioBuffer,
+      audioSeconds,
+      hasAudio: Boolean(audioBuffer)
+    };
   } catch (err) {
     if (err && err.code === 'ENOENT') {
       // Untuk GIF asli, fallback ke Sharp animasi jika FFmpeg belum terpasang
       if (detectedKind === 'gif') {
-        return await convertAnimatedGifWithSharp(inputBuffer, { crop, packName, author });
+        const sharpSticker = await convertAnimatedGifWithSharp(inputBuffer, { crop, packName, author });
+        if (includeAudio) {
+          return { stickerBuffer: sharpSticker, audioBuffer: null, audioSeconds: 0, hasAudio: false };
+        }
+        return sharpSticker;
       }
       throw new MediaValidationError(
         'FFMPEG_MISSING',
@@ -1422,6 +1553,7 @@ async function renderCapMeme(
   {
     topText = '',
     bottomText = '',
+    clean = false,
     blurSigma,
     textBlurSigma,
     blurMode,
@@ -1433,20 +1565,25 @@ async function renderCapMeme(
 ) {
   const { cleanTop, cleanBottom } = validateCapTexts(topText, bottomText);
   const meta = await validateImageBuffer(inputBuffer);
-  const activeBlurMode = resolveCapBlurMode(blurMode);
-  const safeSigma = resolveCapBlurSigma(blurSigma);
+  const isClean = Boolean(clean);
+  const activeBlurMode = isClean ? 'none' : resolveCapBlurMode(blurMode);
+  const safeSigma = isClean ? 0 : resolveCapBlurSigma(blurSigma);
   const activeTextBlurSigma =
-    activeBlurMode === 'before' ? resolveCapTextBlurSigma(textBlurSigma) : 0;
-  const targetMaxDim = resolveCapMaxDim(overrideMaxDim);
+    !isClean && activeBlurMode === 'before' ? resolveCapTextBlurSigma(textBlurSigma) : 0;
+  const targetMaxDim = isClean
+    ? overrideMaxDim !== undefined && overrideMaxDim !== ''
+      ? Math.round(clampNumber(Number(overrideMaxDim), MAX_CAP_CLEAN_PHOTO_DIM, 240, 2048))
+      : MAX_CAP_CLEAN_PHOTO_DIM
+    : resolveCapMaxDim(overrideMaxDim);
   const activeFontScale = resolveCapFontScale(fontScale);
   const degradeParams = computeCapDegradeParams(safeSigma);
   const textDegradeParams = computeCapTextDegradeParams(activeTextBlurSigma);
 
-  // Pra-tahap: perbaiki rotasi EXIF dan normalkan ukuran kanvas ke CAP_MAX_DIM (bawaan 640 piksel)
-  // agar artefak pecah JPEG hasil downscale->upscale tetap terlihat tegas saat ditampilkan WhatsApp.
+  // Pra-tahap: perbaiki rotasi EXIF dan normalkan ukuran kanvas
+  // (mode burik: CAP_MAX_DIM bawaan 640 piksel; mode jernih/clean: pertahankan resolusi hingga 1600 piksel).
   let basePipeline = sharp(inputBuffer, { limitInputPixels: LIMIT_INPUT_PIXELS }).rotate();
   const srcMaxDim = Math.max(meta.width || 0, meta.height || 0);
-  const minDim = Math.min(360, targetMaxDim);
+  const minDim = isClean ? 0 : Math.min(360, targetMaxDim);
   if (srcMaxDim > targetMaxDim) {
     basePipeline = basePipeline.resize({
       width: targetMaxDim,
@@ -1454,7 +1591,7 @@ async function renderCapMeme(
       fit: 'inside',
       withoutEnlargement: true
     });
-  } else if (srcMaxDim > 0 && srcMaxDim < minDim) {
+  } else if (minDim > 0 && srcMaxDim > 0 && srcMaxDim < minDim) {
     basePipeline = basePipeline.resize({
       width: targetMaxDim,
       height: targetMaxDim,
@@ -1479,7 +1616,20 @@ async function renderCapMeme(
   let stage1Buffer;
   let finalBuffer;
 
-  if (activeBlurMode === 'before') {
+  if (isClean) {
+    // MODE CLEAN / JERNIH (!caphd / !meme): tempel teks Impact + emoji berwarna langsung tanpa pemburikan.
+    stage1Buffer = await sharp(normalized.data)
+      .composite([{ input: overlayPng, top: 0, left: 0 }])
+      .png()
+      .toBuffer();
+
+    const keepPng = Boolean(meta.hasAlpha && (meta.format === 'png' || meta.format === 'webp'));
+    finalBuffer = keepPng
+      ? stage1Buffer
+      : await sharp(stage1Buffer)
+          .jpeg({ quality: 92, mozjpeg: true, chromaSubsampling: '4:4:4' })
+          .toBuffer();
+  } else if (activeBlurMode === 'before') {
     // =========================================================================
     // MODE BEFORE — TAHAP 1: Burikkan foto dasar terlebih dahulu (downscale -> JPEG -> upscale).
     // =========================================================================
@@ -1569,6 +1719,7 @@ async function renderCapSticker(
   {
     topText = '',
     bottomText = '',
+    clean = false,
     blurSigma,
     textBlurSigma,
     blurMode,
@@ -1581,10 +1732,11 @@ async function renderCapSticker(
 ) {
   const { cleanTop, cleanBottom } = validateCapTexts(topText, bottomText);
   const meta = await validateImageBuffer(webpBuffer, { requireWebp: true });
-  const activeBlurMode = resolveCapBlurMode(blurMode);
-  const safeSigma = resolveCapBlurSigma(blurSigma);
+  const isClean = Boolean(clean);
+  const activeBlurMode = isClean ? 'none' : resolveCapBlurMode(blurMode);
+  const safeSigma = isClean ? 0 : resolveCapBlurSigma(blurSigma);
   const activeTextBlurSigma =
-    activeBlurMode === 'before' ? resolveCapTextBlurSigma(textBlurSigma) : 0;
+    !isClean && activeBlurMode === 'before' ? resolveCapTextBlurSigma(textBlurSigma) : 0;
   const activeFontScale = resolveCapFontScale(fontScale);
   const degradeParams = computeCapDegradeParams(safeSigma);
   const textDegradeParams = computeCapTextDegradeParams(activeTextBlurSigma);
@@ -1621,7 +1773,14 @@ async function renderCapSticker(
     let stage1Buffer;
     let webpRaw;
 
-    if (activeBlurMode === 'before') {
+    if (isClean) {
+      stage1Buffer = await sharp(basePng)
+        .composite([{ input: overlayPng, top: 0, left: 0 }])
+        .png()
+        .toBuffer();
+
+      webpRaw = await sharp(stage1Buffer).webp({ quality: 90, effort: 4 }).toBuffer();
+    } else if (activeBlurMode === 'before') {
       stage1Buffer = await degradeRgbaStickerCrusty(basePng, {
         isRaw: false,
         width: targetSize,
@@ -1780,7 +1939,16 @@ async function renderCapSticker(
     let stage1Raw;
     let finalFrameRaw;
 
-    if (activeBlurMode === 'before') {
+    if (isClean) {
+      stage1Raw = await sharp(normalizedFrameRaw, {
+        raw: { width: targetSize, height: targetSize, channels: 4 }
+      })
+        .composite([{ input: overlayPng, top: 0, left: 0 }])
+        .raw()
+        .toBuffer();
+
+      finalFrameRaw = stage1Raw;
+    } else if (activeBlurMode === 'before') {
       stage1Raw = await degradeRgbaStickerCrusty(normalizedFrameRaw, {
         isRaw: true,
         width: targetSize,
@@ -1836,14 +2004,24 @@ async function renderCapSticker(
     processedFrames.push(finalFrameRaw);
   }
 
-  const passes = [
-    { step: 1, quality: 68 },
-    { step: 1, quality: 42 },
-    { step: 1, quality: 22 },
-    { step: 2, quality: 28 },
-    { step: 2, quality: 14 },
-    { step: 3, quality: 12 }
-  ];
+  const passes = isClean
+    ? [
+        { step: 1, quality: 85 },
+        { step: 1, quality: 68 },
+        { step: 1, quality: 45 },
+        { step: 1, quality: 25 },
+        { step: 2, quality: 32 },
+        { step: 2, quality: 16 },
+        { step: 3, quality: 14 }
+      ]
+    : [
+        { step: 1, quality: 68 },
+        { step: 1, quality: 42 },
+        { step: 1, quality: 22 },
+        { step: 2, quality: 28 },
+        { step: 2, quality: 14 },
+        { step: 3, quality: 12 }
+      ];
   const triedKeys = new Set();
 
   for (const pass of passes) {
@@ -1912,15 +2090,15 @@ async function renderCapSticker(
  * Menghitung dimensi kanvas video genap (kelipatan 2 piksel agar valid untuk libx264 yuv420p)
  * yang menyesuaikan batas CAP_MAX_DIM seperti pada renderCapMeme.
  */
-function computeEvenCapVideoDims(srcWidth, srcHeight, targetMaxDim) {
+function computeEvenCapVideoDims(srcWidth, srcHeight, targetMaxDim, { upscaleSmall = true } = {}) {
   const safeW = Math.max(2, Math.round(Number(srcWidth) || 640));
   const safeH = Math.max(2, Math.round(Number(srcHeight) || 640));
   const maxDim = Math.max(240, Math.min(1080, Math.floor(targetMaxDim / 2) * 2));
-  const minDim = Math.min(360, maxDim);
+  const minDim = upscaleSmall ? Math.min(360, maxDim) : 0;
   const srcMax = Math.max(safeW, safeH);
 
   let scale = 1;
-  if (srcMax > maxDim || (srcMax > 0 && srcMax < minDim)) {
+  if (srcMax > maxDim || (minDim > 0 && srcMax > 0 && srcMax < minDim)) {
     scale = maxDim / srcMax;
   }
 
@@ -1946,6 +2124,7 @@ async function renderCapVideoOrGif(
     topText = '',
     bottomText = '',
     asGif = false,
+    clean = false,
     blurSigma,
     textBlurSigma,
     blurMode,
@@ -1977,11 +2156,16 @@ async function renderCapVideoOrGif(
     );
   }
 
-  const activeBlurMode = resolveCapBlurMode(blurMode);
-  const safeSigma = resolveCapBlurSigma(blurSigma);
+  const isClean = Boolean(clean);
+  const activeBlurMode = isClean ? 'none' : resolveCapBlurMode(blurMode);
+  const safeSigma = isClean ? 0 : resolveCapBlurSigma(blurSigma);
   const activeTextBlurSigma =
-    activeBlurMode === 'before' ? resolveCapTextBlurSigma(textBlurSigma) : 0;
-  const targetMaxDim = resolveCapMaxDim(overrideMaxDim);
+    !isClean && activeBlurMode === 'before' ? resolveCapTextBlurSigma(textBlurSigma) : 0;
+  const targetMaxDim = isClean
+    ? overrideMaxDim !== undefined && overrideMaxDim !== ''
+      ? Math.round(clampNumber(Number(overrideMaxDim), MAX_CAP_CLEAN_VIDEO_DIM, 240, 1080))
+      : MAX_CAP_CLEAN_VIDEO_DIM
+    : resolveCapMaxDim(overrideMaxDim);
   const activeFontScale = resolveCapFontScale(fontScale);
   const degradeParams = computeCapDegradeParams(safeSigma);
   const textDegradeParams = computeCapTextDegradeParams(activeTextBlurSigma);
@@ -2008,7 +2192,8 @@ async function renderCapVideoOrGif(
     const { width: targetW, height: targetH } = computeEvenCapVideoDims(
       frame0Meta.width,
       frame0Meta.height,
-      targetMaxDim
+      targetMaxDim,
+      { upscaleSmall: !isClean }
     );
 
     const overlayPng = await renderCapOverlayPng({
@@ -2030,7 +2215,12 @@ async function renderCapVideoOrGif(
     let filterComplex;
     let encodeCrf;
 
-    if (activeBlurMode === 'before') {
+    if (isClean) {
+      encodeCrf = 20;
+      filterComplex =
+        `[0:v]scale=${targetW}:${targetH}:flags=lanczos,setsar=1[base];` +
+        `[base][1:v]overlay=0:0:format=auto,format=yuv420p[outv]`;
+    } else if (activeBlurMode === 'before') {
       if (textDegradeParams.enabled) {
         const textCrushW = toEvenCrush(targetW * textDegradeParams.scaleRatio);
         const textCrushH = toEvenCrush(targetH * textDegradeParams.scaleRatio);
@@ -2294,6 +2484,7 @@ async function cropVideoOrGifToSquare(
 module.exports = {
   MAX_MEDIA_BYTES,
   MAX_ANIMATED_STICKER_BYTES,
+  MAX_STICKER_AUDIO_BYTES,
   MAX_VIDEO_INPUT_SECONDS,
   MAX_CAP_VIDEO_SECONDS,
   MAX_CROP_VIDEO_SECONDS,
@@ -2321,6 +2512,7 @@ module.exports = {
   layoutImpactBlock,
   subsampleFrames,
   detectAnimatedMediaKind,
+  probeVideoAudioInfo,
   validateImageBuffer,
   convertImageToSticker,
   convertVideoOrGifToSticker,

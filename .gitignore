@@ -20,6 +20,7 @@ data/knowledge_registry.json
 data/contact_jids.json
 data/ask-queue/
 data/emoji-cache/
+data/sound-sticker-cache/
 data/raw_chats/*
 !data/raw_chats/.gitkeep
 data/knowledge/*

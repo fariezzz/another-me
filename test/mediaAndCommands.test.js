@@ -14,6 +14,7 @@ const {
 const {
   MAX_MEDIA_BYTES,
   MAX_ANIMATED_STICKER_BYTES,
+  MAX_STICKER_AUDIO_BYTES,
   MAX_CAP_VIDEO_SECONDS,
   MediaValidationError,
   resolveCapBlurMode,
@@ -22,6 +23,7 @@ const {
   resolveCapFontScale,
   computeCapDegradeParams,
   subsampleFrames,
+  probeVideoAudioInfo,
   validateImageBuffer,
   convertImageToSticker,
   convertVideoOrGifToSticker,
@@ -35,6 +37,13 @@ const {
   cropVideoOrGifToSquare,
   layoutImpactBlock
 } = require('../src/media/imageProcessor');
+const {
+  AUDIO_STICKER_SYMBOL,
+  findLengthDelimitedField,
+  isAnimatedWebpBuffer,
+  registerAudioForStickerMessage,
+  installAudioStickerProtoPatch
+} = require('../src/whatsapp/audioStickerCodec');
 const { CommandAntiSpamGuard } = require('../src/whatsapp/commandAntiSpam');
 const {
   COMMAND_ALIAS_GROUPS,
@@ -2042,6 +2051,517 @@ test('!cap supports videos (preserving audio) and GIFs with after/before modes, 
     });
     assert.equal(unexpectedDownload, false);
     assert.match(sent[3].content.text, /sekali lihat/i);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('!caphd (!meme / !capclean) renders crisp photo, transparent PNG, sticker, and video without burik degradation', async () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const { execFile } = require('child_process');
+  const { promisify } = require('util');
+  const execFileAsync = promisify(execFile);
+
+  // 1. Parsing semua alias !caphd / .caphd / !meme / .capclean tanpa tabrakan
+  for (const trigger of ['!caphd', '.caphd', '!capclean', '.capclear', '!hdcap', '.meme', '!memecap']) {
+    const p = parseUtilityCommand(`${trigger} ATAS | BAWAH`);
+    assert.ok(p, `Harus mengenali ${trigger}`);
+    assert.equal(p.command, 'caphd');
+    assert.equal(p.isMediaCommand, true);
+  }
+
+  // 2. Foto kontras tinggi 900x900: !caphd menjaga resolusi 900x900 & ketajaman tepi (>180), tanpa burik
+  const stripeSvg = `<svg width="900" height="900" xmlns="http://www.w3.org/2000/svg">
+    <rect width="450" height="900" fill="#ffffff"/>
+    <rect x="450" width="450" height="900" fill="#000000"/>
+  </svg>`;
+  const crispPhoto = await sharp(Buffer.from(stripeSvg)).png().toBuffer();
+
+  const cleanOut = await renderCapMeme(crispPhoto, {
+    topText: 'TEKS ATAS',
+    bottomText: 'JERNIH HD',
+    clean: true,
+    returnStages: true
+  });
+  const burikOut = await renderCapMeme(crispPhoto, {
+    topText: 'TEKS ATAS',
+    bottomText: 'JERNIH HD',
+    clean: false,
+    returnStages: true
+  });
+
+  const cleanMeta = await sharp(cleanOut.finalBuffer).metadata();
+  const burikMeta = await sharp(burikOut.finalBuffer).metadata();
+  assert.equal(cleanMeta.width, 900, '!caphd tidak boleh mengecilkan foto 900px menjadi 640px');
+  assert.equal(cleanMeta.height, 900);
+  assert.equal(burikMeta.width, 640, '!cap burik tetap memakai kanvas 640px');
+
+  const cleanMidEdge = await measureMaxHorizontalEdgeStep(cleanOut.finalBuffer, 0.5);
+  const burikMidEdge = await measureMaxHorizontalEdgeStep(burikOut.finalBuffer, 0.5);
+  assert.ok(cleanMidEdge > 200, `!caphd harus menjaga tepi foto tetap tajam (got ${cleanMidEdge})`);
+  assert.ok(
+    cleanMidEdge > burikMidEdge + 40,
+    `!caphd harus jauh lebih tajam dari !cap burik (${cleanMidEdge} vs ${burikMidEdge})`
+  );
+
+  // 3. Foto PNG transparan tetap menjaga transparansi PNG pada mode clean
+  const alphaPng = await sharp({
+    create: { width: 512, height: 512, channels: 4, background: { r: 20, g: 160, b: 90, alpha: 0.5 } }
+  })
+    .png()
+    .toBuffer();
+  const cleanAlphaOut = await renderCapMeme(alphaPng, { bottomText: 'TRANSPARAN', clean: true });
+  const alphaMeta = await sharp(cleanAlphaOut).metadata();
+  assert.equal(alphaMeta.format, 'png');
+  assert.equal(alphaMeta.hasAlpha, true);
+
+  // 4. Stiker statis pada mode clean menghasilkan WebP 512x512 tajam + EXIF valid
+  const baseSticker = await convertImageToSticker(crispPhoto);
+  const cleanSticker = await renderCapSticker(baseSticker, { bottomText: 'STIKER HD', clean: true });
+  assert.equal(isValidWebpBuffer(cleanSticker), true);
+  assert.equal(readWebpExifMetadata(cleanSticker)['sticker-pack-name'], 'Another Me');
+
+  // 5. Video MP4 via handleUtilityCommands (.meme / !caphd) menghasilkan video jernih & menjaga audio
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'another-me-caphd-vid-'));
+  const inMp4 = path.join(tmpDir, 'in.mp4');
+  const outMp4 = path.join(tmpDir, 'out.mp4');
+  try {
+    await execFileAsync(
+      process.env.FFMPEG_PATH || 'ffmpeg',
+      [
+        '-y',
+        '-f', 'lavfi', '-i', 'testsrc=size=640x480:rate=15:duration=1.5',
+        '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1.5',
+        '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
+        '-c:a', 'aac', '-shortest',
+        inMp4
+      ],
+      { timeout: 20000, windowsHide: true }
+    );
+    const mp4Buf = fs.readFileSync(inMp4);
+
+    const sent = [];
+    const mockSocket = {
+      sendMessage: async (jid, content) => {
+        sent.push({ jid, content });
+        return { key: { id: `caphd-${sent.length}` } };
+      }
+    };
+    const handled = await handleUtilityCommands({
+      waSocket: mockSocket,
+      downloadMediaBuffer: async () => mp4Buf,
+      remoteJid: '628111@s.whatsapp.net',
+      senderKey: 'owner',
+      fromMe: true,
+      profile: { isKnown: true, name: 'Pemilik' },
+      messageText: '.caphd VIDEO HD | TANPA BURIK',
+      msg: {
+        key: { remoteJid: '628111@s.whatsapp.net', id: 'caphd-v1', fromMe: true },
+        message: {
+          videoMessage: {
+            caption: '.caphd VIDEO HD | TANPA BURIK',
+            mimetype: 'video/mp4',
+            fileLength: mp4Buf.length,
+            seconds: 2
+          }
+        }
+      },
+      addLog: () => {}
+    });
+    assert.equal(handled, true);
+    assert.ok(Buffer.isBuffer(sent[0].content.video));
+    assert.equal(sent[0].content.gifPlayback, undefined);
+    fs.writeFileSync(outMp4, sent[0].content.video);
+    const info = await probeVideoAudioInfo(outMp4);
+    assert.equal(info.hasAudio, true, 'Video !caphd harus tetap mempertahankan trek audio aslinya');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('.s on video preserves original audio as WhatsApp Sound Sticker (Opus OGG + Protobuf field 134) and supports mute flag', async () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const { execFile } = require('child_process');
+  const { promisify } = require('util');
+  const { proto } = require('@whiskeysockets/baileys');
+  const execFileAsync = promisify(execFile);
+
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'another-me-soundstk-'));
+  const vidWithAudioPath = path.join(tmpDir, 'with_audio.mp4');
+  const vidSilentPath = path.join(tmpDir, 'silent.mp4');
+
+  try {
+    // 1. Buat video MP4 2 detik DENGAN audio 440Hz dan video MP4 1.5 detik TANPA audio
+    await execFileAsync(
+      process.env.FFMPEG_PATH || 'ffmpeg',
+      [
+        '-y',
+        '-f', 'lavfi', '-i', 'color=c=0x2266aa:s=320x320:d=2:r=12',
+        '-f', 'lavfi', '-i', 'sine=frequency=440:duration=2',
+        '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
+        '-c:a', 'aac', '-shortest',
+        vidWithAudioPath
+      ],
+      { timeout: 20000, windowsHide: true }
+    );
+    await execFileAsync(
+      process.env.FFMPEG_PATH || 'ffmpeg',
+      [
+        '-y',
+        '-f', 'lavfi', '-i', 'color=c=0xaa4422:s=320x320:d=1.5:r=12',
+        '-an',
+        '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
+        vidSilentPath
+      ],
+      { timeout: 20000, windowsHide: true }
+    );
+
+    const withAudioBuf = fs.readFileSync(vidWithAudioPath);
+    const silentBuf = fs.readFileSync(vidSilentPath);
+
+    // 2. convertVideoOrGifToSticker dengan includeAudio: true mengekstrak WebP <= 500 KB + OGG/Opus <= 900 KB
+    const soundRes = await convertVideoOrGifToSticker(withAudioBuf, { includeAudio: true });
+    assert.equal(soundRes.hasAudio, true);
+    assert.equal(isValidWebpBuffer(soundRes.stickerBuffer), true);
+    assert.ok(soundRes.stickerBuffer.length <= MAX_ANIMATED_STICKER_BYTES);
+    assert.ok(Buffer.isBuffer(soundRes.audioBuffer) && soundRes.audioBuffer.length > 0);
+    assert.ok(soundRes.audioBuffer.length <= MAX_STICKER_AUDIO_BYTES);
+    assert.equal(soundRes.audioBuffer.subarray(0, 4).toString('ascii'), 'OggS', 'Audio harus berwadah OGG');
+    assert.ok(soundRes.audioBuffer.includes(Buffer.from('OpusHead')), 'Audio harus berkodek Opus');
+    assert.ok(soundRes.audioSeconds >= 1);
+
+    // Video bisu -> hasAudio false, audioBuffer null
+    const silentRes = await convertVideoOrGifToSticker(silentBuf, { includeAudio: true });
+    assert.equal(silentRes.hasAudio, false);
+    assert.equal(silentRes.audioBuffer, null);
+    assert.equal(isValidWebpBuffer(silentRes.stickerBuffer), true);
+
+    // 3. handleUtilityCommands `.s` pada video bersuara mengirim payload `{ sticker, audioSticker }`,
+    //    sedangkan `.s mute` hanya mengirim `{ sticker }` biasa tanpa audio
+    const sentPayloads = [];
+    const mockSocket = {
+      sendMessage: async (jid, content) => {
+        sentPayloads.push({ jid, content });
+        return { key: { id: `snd-${sentPayloads.length}` } };
+      }
+    };
+
+    await handleUtilityCommands({
+      waSocket: mockSocket,
+      downloadMediaBuffer: async () => withAudioBuf,
+      remoteJid: '628111@s.whatsapp.net',
+      senderKey: 'owner',
+      fromMe: true,
+      profile: { isKnown: true, name: 'Pemilik' },
+      messageText: '.s',
+      msg: {
+        key: { remoteJid: '628111@s.whatsapp.net', id: 's-vid-audio', fromMe: true },
+        message: {
+          videoMessage: {
+            caption: '.s',
+            mimetype: 'video/mp4',
+            fileLength: withAudioBuf.length,
+            seconds: 2
+          }
+        }
+      },
+      addLog: () => {}
+    });
+    assert.ok(Buffer.isBuffer(sentPayloads[0].content.sticker));
+    assert.ok(sentPayloads[0].content.audioSticker, '.s pada video bersuara harus menyertakan audioSticker');
+    assert.ok(Buffer.isBuffer(sentPayloads[0].content.audioSticker.audioBuffer));
+
+    await handleUtilityCommands({
+      waSocket: mockSocket,
+      downloadMediaBuffer: async () => withAudioBuf,
+      remoteJid: '628111@s.whatsapp.net',
+      senderKey: 'owner',
+      fromMe: true,
+      profile: { isKnown: true, name: 'Pemilik' },
+      messageText: '.s mute',
+      msg: {
+        key: { remoteJid: '628111@s.whatsapp.net', id: 's-vid-mute', fromMe: true },
+        message: {
+          videoMessage: {
+            caption: '.s mute',
+            mimetype: 'video/mp4',
+            fileLength: withAudioBuf.length,
+            seconds: 2
+          }
+        }
+      },
+      addLog: () => {}
+    });
+    assert.ok(Buffer.isBuffer(sentPayloads[1].content.sticker));
+    assert.equal(sentPayloads[1].content.audioSticker, undefined, '.s mute tidak boleh menyertakan audioSticker');
+
+    // 4. Verifikasi wire Protobuf Stiker Suara (encode field 134 -> 1 -> 26 + field 24=0 + field 26 AudioMessage & decode balik)
+    installAudioStickerProtoPatch();
+    const encSha = Buffer.alloc(32, 0xab);
+    const stickerMsg = proto.Message.StickerMessage.create({
+      url: 'https://mmg.whatsapp.net/v/t62.15575-24/sample-sticker',
+      mimetype: 'image/webp',
+      fileEncSha256: encSha,
+      fileSha256: Buffer.alloc(32, 0x11),
+      mediaKey: Buffer.alloc(32, 0x22),
+      directPath: '/v/t62.15575-24/sample-sticker',
+      width: 512,
+      height: 512,
+      isAnimated: true
+    });
+    const audioMsg = proto.Message.AudioMessage.create({
+      url: 'https://mmg.whatsapp.net/v/t62.7114-24/sample-audio',
+      mimetype: 'audio/ogg; codecs=opus',
+      fileEncSha256: Buffer.alloc(32, 0xcd),
+      fileSha256: Buffer.alloc(32, 0x33),
+      mediaKey: Buffer.alloc(32, 0x44),
+      directPath: '/v/t62.7114-24/sample-audio',
+      seconds: 2
+    });
+    registerAudioForStickerMessage(stickerMsg, audioMsg);
+
+    const wireMsg = proto.Message.create({
+      stickerMessage: stickerMsg,
+      messageContextInfo: { messageSecret: Buffer.alloc(32, 0x55) }
+    });
+    const encoded = proto.Message.encode(wireMsg).finish();
+
+    // Pastikan field 134 ada, top-level field 26 dibuang, dan field 35 (messageContextInfo) tetap utuh
+    const f134 = findLengthDelimitedField(encoded, 134);
+    assert.ok(f134 && f134.length > 0, 'Field 134 (audioStickerMessage) wajib ada pada wire bytes');
+    assert.equal(findLengthDelimitedField(encoded, 26), null, 'Top-level field 26 tidak boleh rangkap dengan field 134');
+    assert.ok(findLengthDelimitedField(encoded, 35), 'messageContextInfo (field 35) wajib tetap utuh di luar field 134');
+
+    // Decode balik harus memulihkan stickerMessage + audioMessage secara transparan
+    const decoded = proto.Message.decode(encoded);
+    assert.ok(decoded.stickerMessage, 'Decode field 134 harus memulihkan stickerMessage');
+    assert.equal(decoded.stickerMessage.mimetype, 'image/webp');
+    assert.equal(decoded.stickerMessage.isAnimated, true);
+    assert.ok(decoded.stickerMessage[AUDIO_STICKER_SYMBOL], 'Decode field 134 harus memulihkan AudioMessage tersemat');
+    assert.equal(decoded.stickerMessage[AUDIO_STICKER_SYMBOL].mimetype, 'audio/ogg; codecs=opus');
+    assert.equal(decoded.stickerMessage[AUDIO_STICKER_SYMBOL].seconds, 2);
+
+    // Uji juga melalui DeviceSentMessage (untuk perangkat lain milik pengirim)
+    const dsmEncoded = proto.Message.encode({
+      deviceSentMessage: { destinationJid: '628111@s.whatsapp.net', message: wireMsg }
+    }).finish();
+    const dsmDecoded = proto.Message.decode(dsmEncoded);
+    assert.ok(dsmDecoded.deviceSentMessage?.message?.stickerMessage);
+    assert.equal(
+      dsmDecoded.deviceSentMessage.message.stickerMessage[AUDIO_STICKER_SYMBOL]?.mimetype,
+      'audio/ogg; codecs=opus'
+    );
+
+    // Stiker biasa TANPA audio tetap memakai top-level field 26 (tidak masuk field 134)
+    const plainEncoded = proto.Message.encode({
+      stickerMessage: { url: 'https://mmg.whatsapp.net/plain', mimetype: 'image/webp' }
+    }).finish();
+    assert.equal(findLengthDelimitedField(plainEncoded, 134), null);
+    assert.ok(findLengthDelimitedField(plainEncoded, 26));
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('!cap, !caphd, and !wm preserve audio when replying to a WhatsApp Sound Sticker (both direct quoted field 134 and cache fallback)', async () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const { proto } = require('@whiskeysockets/baileys');
+  const ContextManager = require('../src/contextManager');
+  const KnowledgeManager = require('../src/knowledgeManager');
+  const SettingsStore = require('../src/settingsStore');
+  const LLMClient = require('../src/llmClient');
+
+  installAudioStickerProtoPatch();
+
+  const samplePng = await sharp({
+    create: { width: 300, height: 300, channels: 4, background: { r: 60, g: 120, b: 220, alpha: 1 } }
+  })
+    .png()
+    .toBuffer();
+  const staticStickerBuf = await convertImageToSticker(samplePng);
+  assert.equal(isAnimatedWebpBuffer(staticStickerBuf), false);
+  const fakeOpusAudio = Buffer.concat([Buffer.from('OggS'), Buffer.from('OpusHead'), Buffer.alloc(64, 0x2a)]);
+
+  // 1. Lapis 1: quotedMessage langsung membawa Stiker Suara wire bytes (field 134 -> 1 -> 26 + field 26 AudioMessage)
+  const quotedSha = Buffer.alloc(32, 0x77);
+  const quotedStickerProto = proto.Message.StickerMessage.create({
+    url: 'https://mmg.whatsapp.net/v/t62.15575-24/quoted-sound-stk',
+    mimetype: 'image/webp',
+    fileSha256: quotedSha,
+    fileEncSha256: Buffer.alloc(32, 0x88),
+    mediaKey: Buffer.alloc(32, 0x99),
+    directPath: '/v/t62.15575-24/quoted-sound-stk',
+    width: 512,
+    height: 512,
+    isAnimated: false,
+    fileLength: staticStickerBuf.length
+  });
+  const quotedAudioProto = proto.Message.AudioMessage.create({
+    url: 'https://mmg.whatsapp.net/v/t62.7114-24/quoted-sound-audio',
+    mimetype: 'audio/ogg; codecs=opus',
+    fileSha256: Buffer.alloc(32, 0x44),
+    fileEncSha256: Buffer.alloc(32, 0x55),
+    mediaKey: Buffer.alloc(32, 0x66),
+    directPath: '/v/t62.7114-24/quoted-sound-audio',
+    seconds: 4
+  });
+  registerAudioForStickerMessage(quotedStickerProto, quotedAudioProto);
+
+  // Simulasikan full round-trip decode WhatsApp untuk pesan reply (extendedTextMessage.contextInfo.quotedMessage)
+  const replyWireBytes = proto.Message.encode({
+    extendedTextMessage: {
+      text: '!cap TETAP ADA SUARA',
+      contextInfo: {
+        stanzaId: 'orig-sound-stk-1',
+        quotedMessage: { stickerMessage: quotedStickerProto }
+      }
+    }
+  }).finish();
+  const decodedReplyMsg = proto.Message.decode(replyWireBytes);
+  assert.ok(decodedReplyMsg.extendedTextMessage?.contextInfo?.quotedMessage?.stickerMessage);
+  assert.equal(
+    decodedReplyMsg.extendedTextMessage.contextInfo.quotedMessage.stickerMessage[AUDIO_STICKER_SYMBOL]?.seconds,
+    4
+  );
+
+  const sentDirect = [];
+  const mockDownload = async (target) => {
+    if (target?.message?.audioMessage) return fakeOpusAudio;
+    if (target?.message?.stickerMessage) return staticStickerBuf;
+    throw new Error('Unexpected download target');
+  };
+  const mockSock = {
+    sendMessage: async (jid, content) => {
+      sentDirect.push({ jid, content });
+      return { key: { id: `direct-${sentDirect.length}` } };
+    }
+  };
+
+  for (const cmdText of ['!cap TETAP ADA SUARA', '.caphd JERNIH BERSUARA', '!wm Paket Suara | Fariez']) {
+    await handleUtilityCommands({
+      waSocket: mockSock,
+      downloadMediaBuffer: mockDownload,
+      remoteJid: '628111@s.whatsapp.net',
+      senderKey: 'owner',
+      fromMe: true,
+      profile: { isKnown: true, name: 'Pemilik' },
+      messageText: cmdText,
+      msg: {
+        key: { remoteJid: '628111@s.whatsapp.net', id: `req-${cmdText}`, fromMe: true },
+        message: decodedReplyMsg
+      },
+      addLog: () => {}
+    });
+  }
+
+  assert.equal(sentDirect.length, 3);
+  for (let i = 0; i < 3; i++) {
+    assert.equal(isValidWebpBuffer(sentDirect[i].content.sticker), true);
+    assert.ok(sentDirect[i].content.audioSticker, `Kasus #${i + 1} wajib mempertahankan audioSticker`);
+    assert.deepEqual(sentDirect[i].content.audioSticker.audioBuffer, fakeOpusAudio);
+    assert.equal(sentDirect[i].content.audioSticker.audioSeconds, 4);
+  }
+  assert.equal(readWebpExifMetadata(sentDirect[2].content.sticker)['sticker-pack-name'], 'Paket Suara');
+
+  // 2. Lapis 2 & 3: Jika klien WhatsApp memangkas audio dari quotedMessage, BaileysService memulihkannya
+  //    baik dari cache RAM maupun dari cache disk persisten SETELAH bot di-restart!
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'another-me-cap-sound-cache-'));
+  const soundCacheDir = path.join(tmpDir, 'sound-sticker-cache');
+  try {
+    fs.writeFileSync(
+      path.join(tmpDir, 'persona.json'),
+      JSON.stringify({ general_persona: { identity: 'Test' }, categories: { default: { tone: 'Netral', few_shots: [] } } })
+    );
+    const service = new BaileysService({
+      llm: new LLMClient({ baseUrl: 'http://127.0.0.1:4000/v1beta/openai', model: 'gemma-4-26b-a4b-it' }),
+      contextManager: new ContextManager({ dataPath: tmpDir }),
+      knowledgeManager: new KnowledgeManager({ dataPath: tmpDir }),
+      settingsStore: new SettingsStore({ dataPath: tmpDir }),
+      addLog: () => {},
+      options: { soundStickerCacheDir: soundCacheDir }
+    });
+    service.downloadMediaBuffer = mockDownload;
+
+    // Simulasikan stiker suara sempat diterima/terkirim sebelumnya (terekam di RAM + disk)
+    service.rememberSoundSticker({
+      messageId: 'cached-sound-id-99',
+      fileSha256: quotedSha,
+      fileEncSha256: Buffer.alloc(32, 0x88),
+      directPath: '/v/t62.15575-24/quoted-sound-stk',
+      audioMessage: quotedAudioProto,
+      audioBuffer: fakeOpusAudio,
+      audioSeconds: 6,
+      messageKey: { remoteJid: '628111@s.whatsapp.net', id: 'cached-sound-id-99', fromMe: true }
+    });
+
+    // Pemilik membalas stiker dengan quotedMessage TANPA audioMessage (simulasi pemangkasan klien)
+    const strippedCandidate = {
+      kind: 'sticker',
+      source: 'quoted',
+      mimeType: 'image/webp',
+      fileLength: staticStickerBuf.length,
+      fileSha256: quotedSha,
+      fileEncSha256: Buffer.alloc(32, 0x88),
+      directPath: '/v/t62.15575-24/quoted-sound-stk',
+      audioMessage: null,
+      targetMsg: {
+        key: { remoteJid: '628111@s.whatsapp.net', id: 'cached-sound-id-99', fromMe: true },
+        message: { stickerMessage: { mimetype: 'image/webp', fileSha256: quotedSha } }
+      }
+    };
+    const recovered = await service.resolveSoundStickerAudio(strippedCandidate);
+    assert.ok(recovered, 'Cache lapis 2 wajib memulihkan audio saat quotedMessage tidak membawa audioMessage');
+    assert.deepEqual(recovered.audioBuffer, fakeOpusAudio);
+    assert.equal(recovered.audioSeconds, 6);
+
+    // 2b. Simulasi RESTART BOT: instans BaileysService BARU (cache RAM kosong) tetap memulihkan audio dari cache disk!
+    const restartedService = new BaileysService({
+      llm: new LLMClient({ baseUrl: 'http://127.0.0.1:4000/v1beta/openai', model: 'gemma-4-26b-a4b-it' }),
+      contextManager: new ContextManager({ dataPath: tmpDir }),
+      knowledgeManager: new KnowledgeManager({ dataPath: tmpDir }),
+      settingsStore: new SettingsStore({ dataPath: tmpDir }),
+      addLog: () => {},
+      options: { soundStickerCacheDir: soundCacheDir }
+    });
+    assert.equal(restartedService.soundStickerCache.size, 0, 'Cache RAM harus kosong pasca restart');
+    const recoveredAfterRestart = await restartedService.resolveSoundStickerAudio(strippedCandidate);
+    assert.ok(recoveredAfterRestart, 'Cache disk lapis 3 wajib memulihkan audio lintas restart bot');
+    assert.deepEqual(recoveredAfterRestart.audioBuffer, fakeOpusAudio);
+    assert.equal(recoveredAfterRestart.audioSeconds, 6);
+
+    // Pemulihan juga berhasil lewat fileSha256 saja walau stanzaId baru (stiker difavoritkan & dikirim ulang)
+    const recoveredByShaOnly = await restartedService.resolveSoundStickerAudio({
+      ...strippedCandidate,
+      fileEncSha256: null,
+      directPath: '',
+      targetMsg: {
+        key: { remoteJid: '628111@s.whatsapp.net', id: 'brand-new-stanza-id', fromMe: true },
+        message: { stickerMessage: { mimetype: 'image/webp', fileSha256: quotedSha } }
+      }
+    });
+    assert.ok(recoveredByShaOnly, 'Cache disk wajib mengenali stiker yang sama lewat fileSha256');
+    assert.deepEqual(recoveredByShaOnly.audioBuffer, fakeOpusAudio);
+
+    // 3. Stiker diam biasa (tanpa audio di quotedMessage maupun cache) tetap mengembalikan null
+    const silentCandidate = {
+      kind: 'sticker',
+      source: 'quoted',
+      mimeType: 'image/webp',
+      fileLength: staticStickerBuf.length,
+      fileSha256: Buffer.alloc(32, 0x01),
+      audioMessage: null,
+      targetMsg: {
+        key: { remoteJid: '628111@s.whatsapp.net', id: 'silent-stk-1', fromMe: false },
+        message: { stickerMessage: { mimetype: 'image/webp' } }
+      }
+    };
+    assert.equal(await restartedService.resolveSoundStickerAudio(silentCandidate), null);
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
