@@ -14,6 +14,7 @@ const {
 const {
   MAX_MEDIA_BYTES,
   MAX_ANIMATED_STICKER_BYTES,
+  MAX_CAP_VIDEO_SECONDS,
   MediaValidationError,
   resolveCapBlurMode,
   resolveCapTextBlurSigma,
@@ -29,6 +30,7 @@ const {
   renderTextBlurImage,
   renderCapMeme,
   renderCapSticker,
+  renderCapVideoOrGif,
   cropImageToSquare,
   cropVideoOrGifToSquare,
   layoutImpactBlock
@@ -375,7 +377,7 @@ test('utilityCommands politely rejects non-image media and oversized metadata be
     }
   };
 
-  // 1. Video dengan caption .cap -> ditolak sopan tanpa memanggil download
+  // 1. Audio (non-visual) dengan balasan .cap -> ditolak sopan tanpa memanggil download
   await handleUtilityCommands({
     waSocket: mockSocket,
     downloadMediaBuffer: async () => {
@@ -389,12 +391,22 @@ test('utilityCommands politely rejects non-image media and oversized metadata be
     messageText: '.cap Atas | Bawah',
     msg: {
       key: { remoteJid: '628111@s.whatsapp.net', id: 'm1', fromMe: true },
-      message: { videoMessage: { caption: '.cap Atas | Bawah', mimetype: 'video/mp4', fileLength: 1000 } }
+      message: {
+        extendedTextMessage: {
+          text: '.cap Atas | Bawah',
+          contextInfo: {
+            stanzaId: 'orig-audio-1',
+            quotedMessage: {
+              audioMessage: { mimetype: 'audio/ogg; codecs=opus', fileLength: 1000 }
+            }
+          }
+        }
+      }
     },
     addLog: () => {}
   });
   assert.equal(downloadCalled, false);
-  assert.match(sent[0].content.text, /hanya menerima berkas gambar/i);
+  assert.match(sent[0].content.text, /hanya menerima foto, video, GIF, atau stiker/i);
 
   // 2. Foto > 5 Megabyte di metadata -> ditolak SEBELUM downloadMediaBuffer dipanggil
   await handleUtilityCommands({
@@ -1776,5 +1788,248 @@ test('!cap renders full-color emojis cleanly alongside Impact text in before/aft
   } finally {
     clearEmojiMemoryCache();
     fs.rmSync(tmpCache, { recursive: true, force: true });
+  }
+});
+
+test('!cap supports videos (preserving audio) and GIFs with after/before modes, duration guard, and View Once block', async (t) => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const { execFileSync } = require('child_process');
+
+  try {
+    execFileSync('ffmpeg', ['-version'], { stdio: 'ignore', windowsHide: true });
+  } catch {
+    t.skip('FFmpeg tidak terpasang di lingkungan pengujian ini');
+    return;
+  }
+
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'another-me-capvid-test-'));
+  try {
+    // Buat video MP4 640x480 berdurasi 1 detik dengan tepi tajam kiri-gelap/kanan-terang + trek audio
+    const sampleMp4Path = path.join(tmpDir, 'sample.mp4');
+    execFileSync(
+      'ffmpeg',
+      [
+        '-y',
+        '-f',
+        'lavfi',
+        '-i',
+        'color=c=#183050:s=640x480:d=1:r=10',
+        '-f',
+        'lavfi',
+        '-i',
+        'sine=frequency=440:duration=1',
+        '-vf',
+        'drawbox=x=320:y=0:w=320:h=480:color=#dce8f5:t=fill',
+        '-c:v',
+        'libx264',
+        '-pix_fmt',
+        'yuv420p',
+        '-c:a',
+        'aac',
+        '-shortest',
+        sampleMp4Path
+      ],
+      { stdio: 'ignore', windowsHide: true }
+    );
+    const mp4Buf = fs.readFileSync(sampleMp4Path);
+
+    // Buat berkas GIF animasi 320x240 berdurasi 1 detik
+    const sampleGifPath = path.join(tmpDir, 'sample.gif');
+    execFileSync(
+      'ffmpeg',
+      ['-y', '-f', 'lavfi', '-i', 'testsrc=duration=1:size=320x240:rate=8', sampleGifPath],
+      { stdio: 'ignore', windowsHide: true }
+    );
+    const gifBuf = fs.readFileSync(sampleGifPath);
+
+    const probeStreams = (buf, name) => {
+      const p = path.join(tmpDir, name);
+      fs.writeFileSync(p, buf);
+      const out = execFileSync(
+        'ffprobe',
+        ['-v', 'error', '-show_entries', 'stream=codec_type,width,height', '-of', 'json', p],
+        { encoding: 'utf8', windowsHide: true }
+      );
+      return JSON.parse(out).streams;
+    };
+
+    const extractFramePng = (buf, name) => {
+      const mp4p = path.join(tmpDir, `${name}.mp4`);
+      const pngp = path.join(tmpDir, `${name}.png`);
+      fs.writeFileSync(mp4p, buf);
+      execFileSync('ffmpeg', ['-y', '-i', mp4p, '-frames:v', '1', pngp], {
+        stdio: 'ignore',
+        windowsHide: true
+      });
+      return fs.readFileSync(pngp);
+    };
+
+    // 1. Mode 'after' pada video biasa: mempertahankan audio, dimensi 640x480, teks terpasang dan ikut burik
+    const afterRes = await renderCapVideoOrGif(mp4Buf, {
+      topText: 'ATAS',
+      bottomText: 'BAWAH',
+      asGif: false,
+      blurMode: 'after',
+      blurSigma: 3.5,
+      maxDim: 640,
+      fontScale: 1.0
+    });
+    assert.equal(afterRes.kind, 'video');
+    assert.equal(afterRes.width, 640);
+    assert.equal(afterRes.height, 480);
+    const afterStreams = probeStreams(afterRes.buffer, 'cap_after.mp4');
+    assert.equal(afterStreams.find((s) => s.codec_type === 'video')?.width, 640);
+    assert.equal(afterStreams.find((s) => s.codec_type === 'video')?.height, 480);
+    assert.ok(afterStreams.find((s) => s.codec_type === 'audio'), 'Audio video harus tetap dipertahankan pada !cap video');
+
+    // 2. Mode 'before' (textBlurSigma: 0): latar burik, tepi teks jauh lebih tajam daripada mode 'after'
+    const beforeRes = await renderCapVideoOrGif(mp4Buf, {
+      topText: 'ATAS',
+      bottomText: 'BAWAH',
+      asGif: false,
+      blurMode: 'before',
+      blurSigma: 3.5,
+      textBlurSigma: 0,
+      maxDim: 640,
+      fontScale: 1.0
+    });
+    const afterFrame = extractFramePng(afterRes.buffer, 'after_f0');
+    const beforeFrame = extractFramePng(beforeRes.buffer, 'before_f0');
+    const afterTextEdge = await measureMaxHorizontalEdgeStep(afterFrame, 0.9);
+    const beforeTextEdge = await measureMaxHorizontalEdgeStep(beforeFrame, 0.9);
+    assert.ok(afterTextEdge > 60, `Teks harus terlihat pada bingkai video mode after (got ${afterTextEdge})`);
+    assert.ok(
+      beforeTextEdge > afterTextEdge,
+      `Tepi teks video mode before (textBlurSigma=0) harus lebih tajam dari mode after (${beforeTextEdge} vs ${afterTextEdge})`
+    );
+
+    // 3. GIF animasi -> keluaran MP4 GIF tanpa audio
+    const gifRes = await renderCapVideoOrGif(gifBuf, {
+      bottomText: 'MANTAP',
+      asGif: true,
+      blurMode: 'after',
+      blurSigma: 2.5,
+      maxDim: 512,
+      fontScale: 1.0
+    });
+    assert.equal(gifRes.kind, 'gif');
+    const gifStreams = probeStreams(gifRes.buffer, 'cap_gif.mp4');
+    assert.equal(gifStreams.length, 1);
+    assert.equal(gifStreams[0].codec_type, 'video');
+
+    // 4. End-to-end handleUtilityCommands: video, WhatsApp GIF, durasi > MAX_CAP_VIDEO_SECONDS, dan View Once
+    const sent = [];
+    let unexpectedDownload = false;
+    const mockSocket = {
+      sendMessage: async (jid, content) => {
+        sent.push({ jid, content });
+        return { key: { id: `capvid-${sent.length}` } };
+      }
+    };
+
+    // 4a. Video biasa dengan caption !cap -> { video, mimetype: 'video/mp4' } tanpa gifPlayback
+    await handleUtilityCommands({
+      waSocket: mockSocket,
+      downloadMediaBuffer: async () => mp4Buf,
+      remoteJid: '628111@s.whatsapp.net',
+      senderKey: 'owner',
+      fromMe: true,
+      profile: { isKnown: true, name: 'Pemilik' },
+      messageText: '!cap TES VIDEO',
+      msg: {
+        key: { remoteJid: '628111@s.whatsapp.net', id: 'cv-1', fromMe: true },
+        message: {
+          videoMessage: { caption: '!cap TES VIDEO', mimetype: 'video/mp4', fileLength: mp4Buf.length, seconds: 1 }
+        }
+      },
+      addLog: () => {}
+    });
+    assert.ok(Buffer.isBuffer(sent[0].content.video));
+    assert.equal(sent[0].content.gifPlayback, undefined);
+
+    // 4b. WhatsApp GIF (gifPlayback: true) -> { video, gifPlayback: true }
+    await handleUtilityCommands({
+      waSocket: mockSocket,
+      downloadMediaBuffer: async () => mp4Buf,
+      remoteJid: '628111@s.whatsapp.net',
+      senderKey: 'owner',
+      fromMe: true,
+      profile: { isKnown: true, name: 'Pemilik' },
+      messageText: '.cap TES GIF',
+      msg: {
+        key: { remoteJid: '628111@s.whatsapp.net', id: 'cv-2', fromMe: true },
+        message: {
+          videoMessage: {
+            caption: '.cap TES GIF',
+            mimetype: 'video/mp4',
+            fileLength: mp4Buf.length,
+            seconds: 1,
+            gifPlayback: true
+          }
+        }
+      },
+      addLog: () => {}
+    });
+    assert.ok(Buffer.isBuffer(sent[1].content.video));
+    assert.equal(sent[1].content.gifPlayback, true);
+
+    // 4c. Video > MAX_CAP_VIDEO_SECONDS ditolak SEBELUM diunduh
+    await handleUtilityCommands({
+      waSocket: mockSocket,
+      downloadMediaBuffer: async () => {
+        unexpectedDownload = true;
+        return Buffer.alloc(0);
+      },
+      remoteJid: '628111@s.whatsapp.net',
+      senderKey: 'owner',
+      fromMe: true,
+      profile: { isKnown: true, name: 'Pemilik' },
+      messageText: '!cap KEPANJANGAN',
+      msg: {
+        key: { remoteJid: '628111@s.whatsapp.net', id: 'cv-long', fromMe: true },
+        message: {
+          videoMessage: {
+            caption: '!cap KEPANJANGAN',
+            mimetype: 'video/mp4',
+            fileLength: 100000,
+            seconds: MAX_CAP_VIDEO_SECONDS + 15
+          }
+        }
+      },
+      addLog: () => {}
+    });
+    assert.equal(unexpectedDownload, false);
+    assert.match(sent[2].content.text, /durasi videonya terlalu panjang/i);
+
+    // 4d. Video sekali lihat (View Once) ditolak SEBELUM diunduh
+    await handleUtilityCommands({
+      waSocket: mockSocket,
+      downloadMediaBuffer: async () => {
+        unexpectedDownload = true;
+        return Buffer.alloc(0);
+      },
+      remoteJid: '628111@s.whatsapp.net',
+      senderKey: 'owner',
+      fromMe: true,
+      profile: { isKnown: true, name: 'Pemilik' },
+      messageText: '!cap RAHASIA',
+      msg: {
+        key: { remoteJid: '628111@s.whatsapp.net', id: 'cv-vo', fromMe: true },
+        message: {
+          viewOnceMessageV2: {
+            message: {
+              videoMessage: { caption: '!cap RAHASIA', mimetype: 'video/mp4', fileLength: 10000, viewOnce: true }
+            }
+          }
+        }
+      },
+      addLog: () => {}
+    });
+    assert.equal(unexpectedDownload, false);
+    assert.match(sent[3].content.text, /sekali lihat/i);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });

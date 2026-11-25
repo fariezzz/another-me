@@ -43,6 +43,7 @@ const {
 const MAX_MEDIA_BYTES = parseInt(process.env.MAX_MEDIA_BYTES, 10) || 5 * 1024 * 1024; // 5 Megabyte
 const MAX_ANIMATED_STICKER_BYTES = 500 * 1024; // 500 Kilobyte agar pasti diterima & diputar WhatsApp
 const MAX_VIDEO_INPUT_SECONDS = 15;
+const MAX_CAP_VIDEO_SECONDS = 45;
 const MAX_CROP_VIDEO_SECONDS = 60;
 const DEFAULT_VIDEO_STICKER_SECONDS = clampNumber(
   parseInt(process.env.MAX_VIDEO_STICKER_SECONDS, 10),
@@ -1908,6 +1909,211 @@ async function renderCapSticker(
 }
 
 /**
+ * Menghitung dimensi kanvas video genap (kelipatan 2 piksel agar valid untuk libx264 yuv420p)
+ * yang menyesuaikan batas CAP_MAX_DIM seperti pada renderCapMeme.
+ */
+function computeEvenCapVideoDims(srcWidth, srcHeight, targetMaxDim) {
+  const safeW = Math.max(2, Math.round(Number(srcWidth) || 640));
+  const safeH = Math.max(2, Math.round(Number(srcHeight) || 640));
+  const maxDim = Math.max(240, Math.min(1080, Math.floor(targetMaxDim / 2) * 2));
+  const minDim = Math.min(360, maxDim);
+  const srcMax = Math.max(safeW, safeH);
+
+  let scale = 1;
+  if (srcMax > maxDim || (srcMax > 0 && srcMax < minDim)) {
+    scale = maxDim / srcMax;
+  }
+
+  const toEven = (n) => Math.max(64, Math.floor(Math.round(n) / 2) * 2);
+  return {
+    width: toEven(safeW * scale),
+    height: toEven(safeH * scale)
+  };
+}
+
+/**
+ * Fitur 2c: !cap <teks atas> | <teks bawah> pada video (.mp4/.webm/.mov/.avi) atau GIF
+ * (WhatsApp GIF maupun berkas .gif animasi).
+ * Menggunakan overlay PNG transparan yang identik dengan renderCapMeme (font Impact/Anton +
+ * emoji berwarna penuh Twemoji + CAP_FONT_SCALE), lalu menerapkan siklus burik shitpost
+ * (downscale -> upscale + kompresi H.264 kasar) mengikuti CAP_BLUR_MODE ('after' | 'before'),
+ * CAP_BLUR_SIGMA, CAP_TEXT_BLUR_SIGMA, dan CAP_MAX_DIM.
+ * Trek audio dipertahankan untuk video biasa; GIF dikeluarkan sebagai MP4 gifPlayback tanpa audio.
+ */
+async function renderCapVideoOrGif(
+  inputBuffer,
+  {
+    topText = '',
+    bottomText = '',
+    asGif = false,
+    blurSigma,
+    textBlurSigma,
+    blurMode,
+    maxDim: overrideMaxDim,
+    fontScale,
+    emojiOptions,
+    maxDurationSec = MAX_CAP_VIDEO_SECONDS,
+    ffmpegPath = FFMPEG_PATH
+  } = {}
+) {
+  const { cleanTop, cleanBottom } = validateCapTexts(topText, bottomText);
+
+  if (!Buffer.isBuffer(inputBuffer) || inputBuffer.length === 0) {
+    throw new MediaValidationError('EMPTY_BUFFER', 'Maaf, media gagal diunduh atau berkasnya kosong.');
+  }
+  if (inputBuffer.length > MAX_MEDIA_BYTES) {
+    const maxMb = Math.round((MAX_MEDIA_BYTES / (1024 * 1024)) * 10) / 10;
+    throw new MediaValidationError(
+      'TOO_LARGE',
+      `Maaf, ukuran videonya melebihi batas maksimal ${maxMb} Megabyte. Coba kirim berkas yang lebih kecil ya.`
+    );
+  }
+
+  const detectedKind = detectAnimatedMediaKind(inputBuffer);
+  if (!detectedKind) {
+    throw new MediaValidationError(
+      'NOT_MEDIA',
+      'Maaf, format berkas video atau GIF ini tidak dikenali atau berkasnya rusak.'
+    );
+  }
+
+  const activeBlurMode = resolveCapBlurMode(blurMode);
+  const safeSigma = resolveCapBlurSigma(blurSigma);
+  const activeTextBlurSigma =
+    activeBlurMode === 'before' ? resolveCapTextBlurSigma(textBlurSigma) : 0;
+  const targetMaxDim = resolveCapMaxDim(overrideMaxDim);
+  const activeFontScale = resolveCapFontScale(fontScale);
+  const degradeParams = computeCapDegradeParams(safeSigma);
+  const textDegradeParams = computeCapTextDegradeParams(activeTextBlurSigma);
+  const treatAsGif = Boolean(asGif || detectedKind === 'gif');
+  const safeMaxDuration = clampNumber(Number(maxDurationSec), MAX_CAP_VIDEO_SECONDS, 3, 60);
+
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'another-me-capvid-'));
+  const inputPath = path.join(tmpDir, `input.${detectedKind}`);
+  const frame0Path = path.join(tmpDir, 'frame0.png');
+  const overlayPath = path.join(tmpDir, 'overlay.png');
+  const outputPath = path.join(tmpDir, 'output.mp4');
+
+  try {
+    fs.writeFileSync(inputPath, inputBuffer);
+
+    // Ambil bingkai pertama lewat FFmpeg agar rotasi metadata MP4 otomatis diterapkan sebelum ukur dimensi
+    await execFileAsync(ffmpegPath, ['-y', '-i', inputPath, '-frames:v', '1', frame0Path], {
+      timeout: 20000,
+      maxBuffer: 2 * 1024 * 1024,
+      windowsHide: true
+    });
+
+    const frame0Meta = await sharp(frame0Path, { limitInputPixels: LIMIT_INPUT_PIXELS }).metadata();
+    const { width: targetW, height: targetH } = computeEvenCapVideoDims(
+      frame0Meta.width,
+      frame0Meta.height,
+      targetMaxDim
+    );
+
+    const overlayPng = await renderCapOverlayPng({
+      imgWidth: targetW,
+      imgHeight: targetH,
+      cleanTop,
+      cleanBottom,
+      textBlurSigma: 0,
+      fontScale: activeFontScale,
+      emojiOptions
+    });
+    fs.writeFileSync(overlayPath, overlayPng);
+
+    const toEvenCrush = (n) => Math.max(64, Math.floor(Math.round(n) / 2) * 2);
+    const crushW = toEvenCrush(targetW * degradeParams.scaleRatio);
+    const crushH = toEvenCrush(targetH * degradeParams.scaleRatio);
+    const videoCrf = Math.round(clampNumber(28 + Math.log1p(degradeParams.level) * 7.2, 38, 30, 46));
+
+    let filterComplex;
+    let encodeCrf;
+
+    if (activeBlurMode === 'before') {
+      if (textDegradeParams.enabled) {
+        const textCrushW = toEvenCrush(targetW * textDegradeParams.scaleRatio);
+        const textCrushH = toEvenCrush(targetH * textDegradeParams.scaleRatio);
+        encodeCrf = Math.round(clampNumber(25 + textDegradeParams.level * 3.5, 29, 26, 39));
+        filterComplex =
+          `[0:v]scale=${crushW}:${crushH}:flags=bicubic,scale=${targetW}:${targetH}:flags=bilinear,setsar=1[base];` +
+          `[base][1:v]overlay=0:0:format=auto[comp];` +
+          `[comp]scale=${textCrushW}:${textCrushH}:flags=bicubic,scale=${targetW}:${targetH}:flags=bilinear,format=yuv420p[outv]`;
+      } else {
+        encodeCrf = 24;
+        filterComplex =
+          `[0:v]scale=${crushW}:${crushH}:flags=bicubic,scale=${targetW}:${targetH}:flags=bilinear,setsar=1[base];` +
+          `[base][1:v]overlay=0:0:format=auto,format=yuv420p[outv]`;
+      }
+    } else {
+      encodeCrf = videoCrf;
+      filterComplex =
+        `[0:v]scale=${targetW}:${targetH}:flags=bicubic,setsar=1[base];` +
+        `[base][1:v]overlay=0:0:format=auto[comp];` +
+        `[comp]scale=${crushW}:${crushH}:flags=bicubic,scale=${targetW}:${targetH}:flags=bilinear,format=yuv420p[outv]`;
+    }
+
+    const args = [
+      '-y',
+      '-i',
+      inputPath,
+      '-i',
+      overlayPath,
+      '-t',
+      String(safeMaxDuration),
+      '-filter_complex',
+      filterComplex,
+      '-map',
+      '[outv]',
+      ...(treatAsGif ? ['-an'] : ['-map', '0:a?', '-c:a', 'aac', '-b:a', '128k']),
+      '-c:v',
+      'libx264',
+      '-preset',
+      'veryfast',
+      '-crf',
+      String(encodeCrf),
+      '-pix_fmt',
+      'yuv420p',
+      '-movflags',
+      '+faststart',
+      outputPath
+    ];
+
+    await execFileAsync(ffmpegPath, args, {
+      timeout: 60000,
+      maxBuffer: 4 * 1024 * 1024,
+      windowsHide: true
+    });
+
+    const mp4Buffer = fs.readFileSync(outputPath);
+    return {
+      kind: treatAsGif ? 'gif' : 'video',
+      buffer: mp4Buffer,
+      mimeType: 'video/mp4',
+      width: targetW,
+      height: targetH,
+      blurMode: activeBlurMode,
+      blurSigma: safeSigma,
+      textBlurSigma: activeTextBlurSigma,
+      fontScale: activeFontScale
+    };
+  } catch (err) {
+    if (err && err.code === 'ENOENT') {
+      throw new MediaValidationError(
+        'FFMPEG_MISSING',
+        'Maaf, perintah !cap pada video atau GIF memerlukan FFmpeg yang terpasang di sistem.'
+      );
+    }
+    if (err instanceof MediaValidationError) throw err;
+    throw new Error(`FFmpeg gagal memproses !cap video: ${err.message}`);
+  } finally {
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    } catch {}
+  }
+}
+
+/**
  * Memotong gambar (JPEG/PNG/WebP/GIF diam) menjadi kotak 1:1 tepat di tengah.
  * Jika berkas adalah GIF animasi (> 1 bingkai), otomatis diteruskan ke pemotong GIF/video 1:1.
  */
@@ -2089,6 +2295,7 @@ module.exports = {
   MAX_MEDIA_BYTES,
   MAX_ANIMATED_STICKER_BYTES,
   MAX_VIDEO_INPUT_SECONDS,
+  MAX_CAP_VIDEO_SECONDS,
   MAX_CROP_VIDEO_SECONDS,
   DEFAULT_VIDEO_STICKER_SECONDS,
   LIMIT_INPUT_PIXELS,
@@ -2124,6 +2331,7 @@ module.exports = {
   renderTextBlurImage,
   renderCapMeme,
   renderCapSticker,
+  renderCapVideoOrGif,
   cropImageToSquare,
   cropVideoOrGifToSquare
 };

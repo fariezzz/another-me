@@ -15,10 +15,12 @@ const { normalizeMessageContent } = require('@whiskeysockets/baileys');
 const {
   MAX_MEDIA_BYTES,
   MAX_VIDEO_INPUT_SECONDS,
+  MAX_CAP_VIDEO_SECONDS,
   MAX_CROP_VIDEO_SECONDS,
   DEFAULT_PACK_NAME,
   DEFAULT_PACK_AUTHOR,
   MediaValidationError,
+  validateImageBuffer,
   convertImageToSticker,
   convertVideoOrGifToSticker,
   convertStickerToMedia,
@@ -26,6 +28,7 @@ const {
   renderTextBlurImage,
   renderCapMeme,
   renderCapSticker,
+  renderCapVideoOrGif,
   cropImageToSquare,
   cropVideoOrGifToSquare
 } = require('../media/imageProcessor');
@@ -369,7 +372,7 @@ function buildMenuText({ showOwnerCommands = false, isOwner = false } = {}) {
     '*Meme & Teks:*',
     '- `!text <teks>` (`teks`, `txt`) — gambar latar putih teks hitam blur tipis',
     '- `!stext <teks>` (`steks`, `stxt`, `brat`, `sbrat`, `st`) — sama seperti `!text`, langsung jadi stiker',
-    '- `!cap <atas> | <bawah>` (`caption`, `burem`, `blurcap`) — beri teks Impact kapital besar + emoji berwarna bergaya meme burik pada foto atau stiker diam/bergerak (1 teks otomatis di bawah)',
+    '- `!cap <atas> | <bawah>` (`caption`, `burem`, `blurcap`) — beri teks Impact kapital + emoji berwarna bergaya meme burik pada foto, video (<= 45 detik), GIF, atau stiker diam/bergerak (1 teks otomatis di bawah)',
     '',
     '*Utilitas Harian:*',
     '- `!cuaca [kota]` (`weather`, `suhu`) — cek cuaca terkini (bawaan: Tasikmalaya)',
@@ -791,7 +794,7 @@ async function handleUtilityCommands({
         const { topText, bottomText } = parseCapArgs(parsed.args);
         if (!topText && !bottomText) {
           await replyFn({
-            text: 'Pakai: kirim foto dengan caption `!cap <teks atas> | <teks bawah>` (atau `.cap`), atau balas foto maupun stiker dengan perintah tersebut. Kalau cuma 1 teks, otomatis ditaruh di bawah ya.'
+            text: 'Pakai: kirim foto, video, atau GIF dengan caption `!cap <teks atas> | <teks bawah>` (atau `.cap`), atau balas foto, video, GIF, maupun stiker dengan perintah tersebut. Kalau cuma 1 teks, otomatis ditaruh di bawah ya.'
           });
           return true;
         }
@@ -799,13 +802,13 @@ async function handleUtilityCommands({
         const candidate = extractMediaCandidate(msg, normalizedMessage, mediaLookupOpts);
         if (!candidate) {
           await replyFn({
-            text: 'Foto atau stikernya belum ada. Kirim foto dengan caption `!cap <teks atas> | <teks bawah>` atau balas sebuah foto maupun stiker ya.'
+            text: 'Medianya belum ada. Kirim foto, video, atau GIF dengan caption `!cap <teks atas> | <teks bawah>` atau balas sebuah foto, video, GIF, maupun stiker ya.'
           });
           return true;
         }
         if (candidate.kind === 'view_once') {
           await replyFn({
-            text: 'Maaf, foto sekali lihat (View Once) tidak bisa diolah dengan perintah ini untuk menghormati privasi pengirimnya.'
+            text: 'Maaf, foto atau video sekali lihat (View Once) tidak bisa diolah dengan perintah ini untuk menghormati privasi pengirimnya.'
           });
           return true;
         }
@@ -819,20 +822,65 @@ async function handleUtilityCommands({
           addLog('info', `Perintah ${parsed.trigger} pada stiker selesai dibuat untuk ${actorLabel}.`);
           return true;
         }
+        if (candidate.kind === 'video') {
+          if (candidate.seconds > MAX_CAP_VIDEO_SECONDS) {
+            await replyFn({
+              text: `Maaf, durasi videonya terlalu panjang (${candidate.seconds} detik, maksimal ${MAX_CAP_VIDEO_SECONDS} detik) untuk diberi caption !cap. Potong dulu videonya lebih singkat ya.`
+            });
+            return true;
+          }
+
+          const result = await runMediaJob(async () => {
+            const mediaBuffer = await downloadValidatedMediaBuffer(candidate, downloadMediaBuffer);
+            return await renderCapVideoOrGif(mediaBuffer, {
+              topText,
+              bottomText,
+              asGif: Boolean(candidate.gifPlayback)
+            });
+          });
+
+          const payload =
+            result.kind === 'gif'
+              ? { video: result.buffer, gifPlayback: true, mimetype: 'video/mp4' }
+              : { video: result.buffer, mimetype: 'video/mp4' };
+          const outputLabel = result.kind === 'gif' ? 'GIF' : 'video';
+
+          await replyFn(payload);
+          addLog('info', `Perintah ${parsed.trigger} pada ${outputLabel} selesai dibuat untuk ${actorLabel}.`);
+          return true;
+        }
         if (candidate.kind !== 'image') {
           await replyFn({
-            text: 'Maaf, perintah `!cap` hanya menerima berkas gambar, foto, atau stiker (bukan video, audio, atau dokumen non-gambar). Coba kirim foto atau balas stiker ya.'
+            text: 'Maaf, perintah `!cap` hanya menerima foto, video, GIF, atau stiker (bukan audio atau dokumen non-media). Coba kirim atau balas foto, video, GIF, atau stiker ya.'
           });
           return true;
         }
 
-        const memeBuffer = await runMediaJob(async () => {
+        const isGifImage = String(candidate.mimeType || '').toLowerCase() === 'image/gif';
+        const outcome = await runMediaJob(async () => {
           const mediaBuffer = await downloadValidatedMediaBuffer(candidate, downloadMediaBuffer);
-          return await renderCapMeme(mediaBuffer, { topText, bottomText });
+          if (isGifImage) {
+            const meta = await validateImageBuffer(mediaBuffer);
+            if (meta.format === 'gif' && meta.pages && meta.pages > 1) {
+              const gifRes = await renderCapVideoOrGif(mediaBuffer, {
+                topText,
+                bottomText,
+                asGif: true
+              });
+              return { kind: 'gif', buffer: gifRes.buffer };
+            }
+          }
+          const memeBuffer = await renderCapMeme(mediaBuffer, { topText, bottomText });
+          return { kind: 'image', buffer: memeBuffer };
         });
 
-        await replyFn({ image: memeBuffer });
-        addLog('info', `Perintah ${parsed.trigger} selesai dibuat untuk ${actorLabel}.`);
+        if (outcome.kind === 'gif') {
+          await replyFn({ video: outcome.buffer, gifPlayback: true, mimetype: 'video/mp4' });
+          addLog('info', `Perintah ${parsed.trigger} pada GIF selesai dibuat untuk ${actorLabel}.`);
+        } else {
+          await replyFn({ image: outcome.buffer });
+          addLog('info', `Perintah ${parsed.trigger} selesai dibuat untuk ${actorLabel}.`);
+        }
         return true;
       }
 
