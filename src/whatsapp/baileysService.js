@@ -24,12 +24,14 @@ function buildProxyAgent() {
 
 const { renderQrToSvg } = require('../utils/atomicFile');
 const { handleInstantCommands, parseAskCommand, parseAcepCommand } = require('./commandRouter');
+const { extractQuotedText } = require('./askMediaHelper');
 const { CommandAntiSpamGuard } = require('./commandAntiSpam');
 const {
   unwrapWhatsAppMessage,
   cleanCommandText,
   parseUtilityCommand,
   parseFileLength,
+  extractMediaCandidate,
   handleUtilityCommands
 } = require('./utilityCommands');
 
@@ -199,12 +201,26 @@ class BaileysService {
     // Pengaman anti-loop untuk pesan keluar bot sendiri (penting saat fromMe: true diproses)
     this.sentMessageIds = new Set();
 
+    // Pengaman deduplikasi pesan !ask (mencegah event notify + append ganda mengantrekan 2 kali)
+    this.processedAskMessageIds = new Set();
+
     // Pelindung anti-spam berlapis untuk perintah utilitas WhatsApp
     this.commandAntiSpam =
       options.commandAntiSpam ||
       new CommandAntiSpamGuard({
         addLog: this.addLog
       });
+  }
+
+  markAskMessageProcessed(msgId) {
+    if (!msgId) return true;
+    if (this.processedAskMessageIds.has(msgId)) return false;
+    this.processedAskMessageIds.add(msgId);
+    if (this.processedAskMessageIds.size > 200) {
+      const oldest = this.processedAskMessageIds.values().next().value;
+      if (oldest !== undefined) this.processedAskMessageIds.delete(oldest);
+    }
+    return true;
   }
 
   rememberSentMessageId(msgId) {
@@ -746,8 +762,9 @@ class BaileysService {
         const cleanedText = cleanCommandText(messageText);
 
         // 2. Jalur khusus pemilik (fromMe: true atau participant cocok dengan akun bot di grup LID):
-        //    Boleh menjalankan perintah utilitas (awalan ! maupun .) di chat pribadi, chat ke diri sendiri, maupun grup,
-        //    tetapi TIDAK PERNAH masuk ke !acep, !ask, atau balasan otomatis Artificial Intelligence.
+        //    Boleh menjalankan !ask (di semua ruang obrolan + media), !acep (di ruang chat kontak terdaftar),
+        //    serta perintah utilitas (awalan ! maupun .) di chat pribadi, diri sendiri, maupun grup,
+        //    tetapi TIDAK PERNAH masuk ke balasan otomatis Artificial Intelligence.
         const isRecognizedUtilityCmd = Boolean(parseUtilityCommand(cleanedText));
 
         if (isFromMe) {
@@ -761,13 +778,59 @@ class BaileysService {
             continue;
           }
 
-          // Pemilik dari ponsel utama boleh menjalankan !acep dan !ask di ruang chat kontak terdaftar (BUG-04)
-          if (!isGroup && cleanedText.length > 0 && (parseAskCommand(cleanedText).matched || parseAcepCommand(cleanedText, true).matched)) {
-            const ownAltJid = msg.key.remoteJidAlt || msg.key.senderPn || '';
+          // 2a. !ask / !tanya: khusus pemilik (fromMe), berlaku di SEMUA ruang obrolan (diri sendiri, pribadi, grup) & mendukung media
+          if (cleanedText.length > 0 && parseAskCommand(cleanedText).matched) {
+            if (msg.key.id && !this.markAskMessageProcessed(msg.key.id)) {
+              continue;
+            }
+            const ownAltJid = isGroup ? '' : msg.key.remoteJidAlt || '';
+            if (!isGroup) {
+              this.contextManager.recordContactJid(remoteJid, ownAltJid);
+            }
+            const targetProfile = isGroup
+              ? {
+                  isKnown: false,
+                  phone: remoteJid,
+                  name: `Grup ${remoteJid.replace(/@g\.us$/, '')}`,
+                  category: 'group',
+                  enabled: false
+                }
+              : this.contextManager.getContactProfile(remoteJid, '', ownAltJid);
+
+            const mediaCandidate = extractMediaCandidate(msg, normalizedMessage, {
+              isOwnUserJid: (jid) => this.isOwnUserJid(jid),
+              isOwnMessageId: (id) => Boolean(id && this.sentMessageIds.has(id))
+            });
+            const quotedText = mediaCandidate ? '' : extractQuotedText(msg, normalizedMessage);
+
+            await handleInstantCommands({
+              waSocket: this.waSocket,
+              sendTrackedMessage: (jid, content, opts) => this.sendTrackedMessage(jid, content, opts),
+              downloadMediaBuffer: (target) => this.downloadMediaBuffer(target),
+              remoteJid,
+              senderPhone: targetProfile.phone || remoteJid,
+              senderPushName: 'Pemilik',
+              profile: targetProfile,
+              fromMe: true,
+              isGroup,
+              messageText: cleanedText,
+              msg,
+              mediaCandidate,
+              quotedText,
+              contextManager: this.contextManager,
+              queueDir: this.askQueueDir,
+              addLog: this.addLog
+            });
+            continue;
+          }
+
+          // 2b. !acep: tetap khusus di ruang chat pribadi kontak terdaftar
+          if (!isGroup && cleanedText.length > 0 && parseAcepCommand(cleanedText, true).matched) {
+            const ownAltJid = msg.key.remoteJidAlt || '';
             this.contextManager.recordContactJid(remoteJid, ownAltJid);
             const targetProfile = this.contextManager.getContactProfile(remoteJid, '', ownAltJid);
             if (targetProfile.isKnown) {
-              const handledOwnerInstant = await handleInstantCommands({
+              const handledOwnerAcep = await handleInstantCommands({
                 waSocket: this.waSocket,
                 sendTrackedMessage: (jid, content, opts) => this.sendTrackedMessage(jid, content, opts),
                 remoteJid,
@@ -775,17 +838,18 @@ class BaileysService {
                 senderPushName: 'Pemilik',
                 profile: targetProfile,
                 fromMe: true,
+                isGroup: false,
                 messageText: cleanedText,
                 msg,
                 contextManager: this.contextManager,
                 queueDir: this.askQueueDir,
                 addLog: this.addLog
               });
-              if (handledOwnerInstant) continue;
+              if (handledOwnerAcep) continue;
             } else {
               await this.sendTrackedMessage(
                 remoteJid,
-                { text: 'Perintah `!acep` dan `!ask` hanya berlaku di ruang chat kontak terdaftar ya.' },
+                { text: 'Perintah `!acep` hanya berlaku di ruang chat kontak terdaftar ya.' },
                 { quoted: msg }
               );
               continue;
@@ -872,7 +936,7 @@ class BaileysService {
         const senderPhone = profile.phone;
         const historyKey = isGroup ? `group:${remoteJid.replace(/@.*$/, '')}` : senderPhone;
 
-        // 3a. Evaluasi perintah instan bawaan (!ask dan !acep) SEBELUM gate whitelist & vision stiker
+        // 3a. Evaluasi perintah instan bawaan (!ask diblokir untuk non-pemilik; !acep khusus kontak terdaftar)
         if (cleanedText.length > 0) {
           const handled = await handleInstantCommands({
             waSocket: this.waSocket,
@@ -882,6 +946,7 @@ class BaileysService {
             senderPushName,
             profile,
             fromMe: false,
+            isGroup,
             messageText: cleanedText,
             msg,
             contextManager: this.contextManager,

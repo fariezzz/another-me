@@ -164,29 +164,138 @@ function createApiRouter({
       if (!baileysService.isConnected()) {
         return res.status(503).json({ success: false, error: 'WhatsApp belum connected' });
       }
+      const validJidRe = /^[^@\s]+@(s\.whatsapp\.net|lid|g\.us)$/;
+      const directJid = String(req.body?.jid || req.body?.remoteJid || '').trim();
+      const askId = String(req.body?.askId || '').trim();
       const query = String(req.body?.nameOrPhone || req.body?.name || req.body?.phone || '').trim();
       const message = String(req.body?.message || '').trim();
-      if (!query) return res.status(400).json({ success: false, error: 'Nama atau ID kontak wajib diisi' });
+
+      if (!query && !directJid && !askId) {
+        return res.status(400).json({ success: false, error: 'Nama, ID kontak, askId, atau JID wajib diisi' });
+      }
       if (!message) return res.status(400).json({ success: false, error: 'Pesan tidak boleh kosong' });
       if (message.length > 4000) return res.status(400).json({ success: false, error: 'Pesan maksimal 4000 karakter' });
 
-      const found = contextManager.findContactByQuery(query);
-      if (!found) return res.status(404).json({ success: false, error: 'Kontak tidak ditemukan di daftar kontak' });
-      const { phone, contact } = found;
-
-      const targetJid = contextManager.getStoredJid(phone);
-      if (!targetJid) {
-        return res.status(409).json({
-          success: false,
-          error: 'JID kontak belum tersimpan: tunggu kontak mengirim pesan dulu, atau kirim pakai nomor HP asli lewat /api/send-message',
-          phone,
-          contactName: contact.name
+      // 1. Jika pemanggil langsung menyertakan JID valid (@s.whatsapp.net, @lid, atau @g.us)
+      if (directJid) {
+        if (!validJidRe.test(directJid)) {
+          return res.status(400).json({ success: false, error: 'Format JID WhatsApp tidak valid' });
+        }
+        const isGroupTarget = directJid.endsWith('@g.us');
+        const historyKey = isGroupTarget
+          ? `group:${directJid.replace(/@.*$/, '')}`
+          : directJid.replace(/@.*$/, '');
+        const { bubbles, sentIds } = await baileysService.sendManualMessage(directJid, historyKey, message);
+        addLog('manual-send', `Pesan manual terkirim ke ${directJid} (${bubbles} balon) via JID langsung.`, {
+          jid: directJid,
+          bubbles
+        });
+        return res.json({
+          success: true,
+          phone: historyKey,
+          contactName: directJid,
+          jid: directJid,
+          bubbles,
+          messageIds: sentIds
         });
       }
 
-      const { bubbles, sentIds } = await baileysService.sendManualMessage(targetJid, phone, message);
-      addLog('manual-send', `Pesan manual terkirim ke ${contact.name} (${bubbles} balon) via JID tersimpan.`, { phone, bubbles });
-      res.json({ success: true, phone, contactName: contact.name, jid: targetJid, bubbles, messageIds: sentIds });
+      // 2. Jika pemanggil menyertakan askId eksplisit dari antrean !ask
+      if (askId && askQueueMonitor && typeof askQueueMonitor.findTargetByQuery === 'function') {
+        const askTarget = askQueueMonitor.findTargetByQuery(askId);
+        if (!askTarget) {
+          return res.status(404).json({ success: false, error: 'Target antrean !ask tidak ditemukan' });
+        }
+        const historyKey = askTarget.isGroup
+          ? `group:${askTarget.remoteJid.replace(/@.*$/, '')}`
+          : askTarget.phone;
+        const { bubbles, sentIds } = await baileysService.sendManualMessage(askTarget.remoteJid, historyKey, message);
+        addLog('manual-send', `Balasan !ask terkirim ke ${askTarget.name} (${bubbles} balon) via askId.`, {
+          askId: askTarget.id,
+          jid: askTarget.remoteJid,
+          bubbles
+        });
+        return res.json({
+          success: true,
+          phone: askTarget.phone,
+          contactName: askTarget.name,
+          jid: askTarget.remoteJid,
+          bubbles,
+          messageIds: sentIds
+        });
+      }
+
+      // 3. Prioritas utama: pencarian kontak terdaftar di data/contacts.json (kompatibel penuh dengan perilaku lama)
+      const found = contextManager.findContactByQuery(query);
+      if (found) {
+        const { phone, contact } = found;
+        const targetJid = contextManager.getStoredJid(phone);
+        if (!targetJid) {
+          return res.status(409).json({
+            success: false,
+            error: 'JID kontak belum tersimpan: tunggu kontak mengirim pesan dulu, atau kirim pakai nomor HP asli lewat /api/send-message',
+            phone,
+            contactName: contact.name
+          });
+        }
+
+        const { bubbles, sentIds } = await baileysService.sendManualMessage(targetJid, phone, message);
+        addLog('manual-send', `Pesan manual terkirim ke ${contact.name} (${bubbles} balon) via JID tersimpan.`, { phone, bubbles });
+        return res.json({ success: true, phone, contactName: contact.name, jid: targetJid, bubbles, messageIds: sentIds });
+      }
+
+      // 4. Fallback antrean !ask (untuk !ask pemilik di grup maupun obrolan pribadi tak terdaftar)
+      if (askQueueMonitor && typeof askQueueMonitor.findTargetByQuery === 'function') {
+        const queueTarget = askQueueMonitor.findTargetByQuery(query);
+        if (queueTarget) {
+          const historyKey = queueTarget.isGroup
+            ? `group:${queueTarget.remoteJid.replace(/@.*$/, '')}`
+            : queueTarget.phone;
+          const { bubbles, sentIds } = await baileysService.sendManualMessage(queueTarget.remoteJid, historyKey, message);
+          addLog('manual-send', `Balasan !ask terkirim ke ${queueTarget.name} (${bubbles} balon) via target antrean.`, {
+            askId: queueTarget.id,
+            jid: queueTarget.remoteJid,
+            bubbles
+          });
+          return res.json({
+            success: true,
+            phone: queueTarget.phone,
+            contactName: queueTarget.name,
+            jid: queueTarget.remoteJid,
+            bubbles,
+            messageIds: sentIds
+          });
+        }
+      }
+
+      // 5. Fallback JID langsung pada parameter query atau JID tersimpan di contact_jids.json
+      if (validJidRe.test(query)) {
+        const isGroupTarget = query.endsWith('@g.us');
+        const historyKey = isGroupTarget ? `group:${query.replace(/@.*$/, '')}` : query.replace(/@.*$/, '');
+        const { bubbles, sentIds } = await baileysService.sendManualMessage(query, historyKey, message);
+        addLog('manual-send', `Pesan manual terkirim ke ${query} (${bubbles} balon) via JID query.`, { jid: query, bubbles });
+        return res.json({ success: true, phone: historyKey, contactName: query, jid: query, bubbles, messageIds: sentIds });
+      }
+
+      const digitsQuery = query.replace(/\D/g, '');
+      const storedFallbackJid = digitsQuery ? contextManager.getStoredJid(digitsQuery) : null;
+      if (storedFallbackJid) {
+        const { bubbles, sentIds } = await baileysService.sendManualMessage(storedFallbackJid, digitsQuery, message);
+        addLog('manual-send', `Pesan manual terkirim ke ${digitsQuery} (${bubbles} balon) via JID tersimpan.`, {
+          phone: digitsQuery,
+          bubbles
+        });
+        return res.json({
+          success: true,
+          phone: digitsQuery,
+          contactName: digitsQuery,
+          jid: storedFallbackJid,
+          bubbles,
+          messageIds: sentIds
+        });
+      }
+
+      return res.status(404).json({ success: false, error: 'Kontak tidak ditemukan di daftar kontak' });
     } catch (err) {
       const status = err.statusCode || 500;
       addLog('error', `Gagal mengirim ke kontak: ${err.message}`);

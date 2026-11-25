@@ -19,9 +19,9 @@ Bot ini membalas pesan WhatsApp sesuai gaya ketik pemilik berdasarkan kategori r
   - **Anti-Spam Burst**: Pesan beruntun dari satu pengirim ditampung selama `BURST_WINDOW_MS` (default 4.000 milidetik) dan dibalas sekali fokus pada pesan terakhir.
   - **Maksimal 2 Balon & Huruf Kapital Awal**: Balasan bot dibatasi maksimal 2 balon (kelebihan digabung ke balon kedua tanpa membuang isi) dan setiap balon diawali huruf kapital. Pengiriman manual pemilik lewat dasbor tidak dibatasi 2 balon.
   - **Centang Biru Cerdas**: Pesan ditandai terbaca (*read receipt*) hanya ketika balasan siap dikirim agar pesan gagal tidak tampak diabaikan.
-- **Perintah Instan WhatsApp (Khusus Kontak Terdaftar)**:
-  - `!acep` / `!acep on` / `!acep off` / `!acep status`: Menyalakan atau mematikan Artificial Intelligence (AI) khusus kontak pengirim (tidak mengubah sakelar layanan global).
-  - `!ask <pertanyaan>` (alias `!tanya`): Menuliskan pertanyaan ke antrean berkas `data/ask-queue/<id>.json` untuk ditangani hook asisten eksternal, disertai pemantau antrean tertahan di dasbor.
+- **Perintah Instan WhatsApp (Awalan `!` saja)**:
+  - `!acep` / `!acep on` / `!acep off` / `!acep status` (khusus kontak terdaftar & pemilik di ruang chat kontak terdaftar): Menyalakan atau mematikan Artificial Intelligence (AI) khusus kontak pengirim (tidak mengubah sakelar layanan global).
+  - `!ask [pertanyaan]` (alias `!tanya`, **khusus pemilik `fromMe: true`**, berlaku di semua ruang obrolan termasuk diri sendiri, obrolan pribadi siapa pun, dan grup): Menuliskan pertanyaan teks maupun lampiran media (foto, stiker, video/GIF dengan cuplikan bingkai gambar, dokumen PDF/DOCX/teks dengan ekstraksi teks, audio/pesan suara — kirim langsung atau balas media; menolak *View Once*) ke antrean berkas `data/ask-queue/<id>.json` + `data/ask-queue/media/` untuk ditangani hook asisten eksternal, disertai pemantau antrean tertahan di dasbor dan pembersihan otomatis berkas media lama. Non-pemilik yang mengetik `!ask` diabaikan diam-diam tanpa membalas dan tanpa masuk antrean.
 - **Perintah Utilitas & Meme WhatsApp (Pemilik & Lawan Chat Pribadi / Grup)**:
   - Dapat dipakai oleh pemilik sendiri (`fromMe: true`, di chat pribadi, chat ke diri sendiri, maupun grup) serta lawan bicara di chat pribadi maupun grup dengan pelindung anti-spam WhatsApp berlapis (*jitter* alami, *cooldown* per pengirim & per grup, kuota jendela geser, *silent drop*, penalti *flood* 30 menit, dan *circuit breaker* global).
   - Seluruh perintah utilitas mendukung **dua awalan (`!` dan `.`)** beserta alias cadangan (misal `!sticker`, `!stiker`, `!s`, `.sticker`, `.stiker`, `.s`).
@@ -60,6 +60,7 @@ another-me/
 │   │   ├── atomicFile.js            # Penulisan JSON atomik, validasi WebP, & render QR SVG lokal
 │   │   └── webpExif.js              # Penyisip metadata EXIF stiker WhatsApp murni JavaScript
 │   ├── whatsapp/
+│   │   ├── askMediaHelper.js        # Pengolah lampiran media !ask (foto, stiker, bingkai video, teks dokumen)
 │   │   ├── baileysService.js        # Siklus hidup Baileys, backoff reconnect, burst, & loop guard
 │   │   ├── commandAntiSpam.js       # Pelindung anti-spam berlapis & pembatas konkurensi media
 │   │   ├── commandRouter.js         # Parser !acep, !ask, serta pemantau/pembersih ask-queue
@@ -69,7 +70,7 @@ another-me/
 │   └── tools/
 │       └── toolRegistry.js          # 6 tools otonom (waktu, cuaca, Wiki+News+DDG, stiker, KB)
 ├── assets/
-│   └── fonts/                       # Font cadangan Anton (OFL 1.1) & fonts.conf khusus Linux
+│   └── fonts/                       # Font cadangan Anton & Archivo Narrow (OFL 1.1) + fonts.conf khusus Linux
 ├── test/                            # Rangkaian uji otomatis berbasis node:test bawaan Node.js
 ├── data/
 │   ├── persona.json                 # Identitas persona, aturan ketik, & few-shot per kategori

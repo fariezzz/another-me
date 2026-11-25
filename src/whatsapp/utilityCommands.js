@@ -223,14 +223,16 @@ function inspectMediaInContent(content) {
     return {
       kind: 'image',
       mimeType: content.imageMessage.mimetype || 'image/jpeg',
-      fileLength: parseFileLength(content.imageMessage.fileLength)
+      fileLength: parseFileLength(content.imageMessage.fileLength),
+      caption: String(content.imageMessage.caption || '').trim()
     };
   }
   if (content.stickerMessage) {
     return {
       kind: 'sticker',
       mimeType: content.stickerMessage.mimetype || 'image/webp',
-      fileLength: parseFileLength(content.stickerMessage.fileLength)
+      fileLength: parseFileLength(content.stickerMessage.fileLength),
+      isAnimated: Boolean(content.stickerMessage.isAnimated)
     };
   }
   if (content.videoMessage) {
@@ -242,23 +244,30 @@ function inspectMediaInContent(content) {
       mimeType: content.videoMessage.mimetype || 'video/mp4',
       fileLength: parseFileLength(content.videoMessage.fileLength),
       seconds: parseFileLength(content.videoMessage.seconds),
-      gifPlayback: Boolean(content.videoMessage.gifPlayback)
+      gifPlayback: Boolean(content.videoMessage.gifPlayback),
+      caption: String(content.videoMessage.caption || '').trim()
     };
   }
   if (content.audioMessage) {
     return {
       kind: 'audio',
       mimeType: content.audioMessage.mimetype || 'audio/ogg',
-      fileLength: parseFileLength(content.audioMessage.fileLength)
+      fileLength: parseFileLength(content.audioMessage.fileLength),
+      seconds: parseFileLength(content.audioMessage.seconds),
+      ptt: Boolean(content.audioMessage.ptt)
     };
   }
   if (content.documentMessage) {
     const mime = String(content.documentMessage.mimetype || '').toLowerCase();
+    const fileName = String(content.documentMessage.fileName || content.documentMessage.title || '').trim();
+    const caption = String(content.documentMessage.caption || '').trim();
     if (/^image\/(jpeg|jpg|png|webp|gif|avif|heif|tiff)$/.test(mime)) {
       return {
         kind: 'image',
         mimeType: mime,
-        fileLength: parseFileLength(content.documentMessage.fileLength)
+        fileLength: parseFileLength(content.documentMessage.fileLength),
+        fileName,
+        caption
       };
     }
     if (/^video\/(mp4|webm|quicktime|x-msvideo)$/.test(mime)) {
@@ -267,13 +276,17 @@ function inspectMediaInContent(content) {
         mimeType: mime,
         fileLength: parseFileLength(content.documentMessage.fileLength),
         seconds: 0,
-        gifPlayback: false
+        gifPlayback: false,
+        fileName,
+        caption
       };
     }
     return {
       kind: 'document',
       mimeType: mime || 'application/octet-stream',
-      fileLength: parseFileLength(content.documentMessage.fileLength)
+      fileLength: parseFileLength(content.documentMessage.fileLength),
+      fileName,
+      caption
     };
   }
   return null;
@@ -385,10 +398,14 @@ function buildMenuText({ showOwnerCommands = false, isOwner = false } = {}) {
   if (showOwnerCommands) {
     sections.push(
       '',
-      '*Kontrol Khusus (Kontak Terdaftar, awalan `!` saja):*',
-      '- `!acep [on|off|status]` — aktifkan atau matikan balasan otomatis kontak ini',
-      '- `!ask <pertanyaan>` (`!tanya`) — teruskan pertanyaan langsung ke Kiraya'
+      '*Kontrol Khusus (awalan `!` saja):*',
+      '- `!acep [on|off|status]` — aktifkan atau matikan balasan otomatis kontak terdaftar'
     );
+    if (isOwner) {
+      sections.push(
+        '- `!ask [pertanyaan]` (`!tanya`) — khusus pemilik; teruskan pertanyaan teks maupun media (foto, stiker, video, GIF, dokumen, audio — kirim langsung atau balas media) ke Kiraya di semua ruang obrolan'
+      );
+    }
   }
 
   sections.push('', '_Catatan: ukuran gambar maksimal 5 Megabyte._');

@@ -1056,7 +1056,20 @@ test('stealth !ping/!menu for non-owner, owner fromMe !acep/!ask, quoted fromMe 
     const queuedFiles = fs.readdirSync(askDir).filter((f) => f.endsWith('.json'));
     assert.equal(queuedFiles.length, 1);
 
-    // Pemilik mengetik !ask di chat kontak tak terdaftar -> ditolak sopan (tidak masuk antrean Muse)
+    // Pemilik mengetik !acep di chat kontak tak terdaftar -> tetap ditolak sopan
+    await service.handleMessagesUpsert({
+      type: 'notify',
+      messages: [
+        {
+          key: { remoteJid: '628999888777@s.whatsapp.net', fromMe: true, id: 'own-acep-unknown' },
+          message: { conversation: '!acep status' }
+        }
+      ]
+    });
+    assert.match(ownSent[2].content.text, /hanya berlaku di ruang chat kontak terdaftar/i);
+    assert.equal(fs.readdirSync(askDir).filter((f) => f.endsWith('.json')).length, 1);
+
+    // Pemilik mengetik !ask di chat kontak tak terdaftar -> tetap diterima karena !ask khusus fromMe berlaku di semua ruang obrolan
     await service.handleMessagesUpsert({
       type: 'notify',
       messages: [
@@ -1066,8 +1079,8 @@ test('stealth !ping/!menu for non-owner, owner fromMe !acep/!ask, quoted fromMe 
         }
       ]
     });
-    assert.match(ownSent[2].content.text, /hanya berlaku di ruang chat kontak terdaftar/i);
-    assert.equal(fs.readdirSync(askDir).filter((f) => f.endsWith('.json')).length, 1);
+    assert.match(ownSent[3].content.text, /teruskan pertanyaanmu ke Kiraya/i);
+    assert.equal(fs.readdirSync(askDir).filter((f) => f.endsWith('.json')).length, 2);
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }

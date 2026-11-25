@@ -742,12 +742,12 @@ async function renderTextBlurImage(
   const firstBaselineY = Math.round(startTop + chosenSize * 0.82);
 
   const fontFamily =
-    "'Arial Narrow', 'Liberation Sans Narrow', 'Helvetica Neue', Arial, 'DejaVu Sans', sans-serif";
+    "'Arial Narrow', 'Liberation Sans Narrow', 'Archivo Narrow', 'Helvetica Neue', Arial, 'DejaVu Sans', sans-serif";
 
   const textNodes = chosenLines
     .map((line, idx) => {
       const y = firstBaselineY + idx * lineStep;
-      return `<text x="${padX}" y="${y}" text-anchor="start" fill="#0b0b0b" font-family="${fontFamily}" font-size="${chosenSize}" font-weight="600" letter-spacing="-0.02em">${escapeXml(line)}</text>`;
+      return `<text x="${padX}" y="${y}" text-anchor="start" fill="#0b0b0b" font-family="${fontFamily}" font-size="${chosenSize}" font-weight="700" letter-spacing="-0.02em">${escapeXml(line)}</text>`;
     })
     .join('\n    ');
 
