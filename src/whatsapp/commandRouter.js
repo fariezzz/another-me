@@ -399,8 +399,9 @@ async function handleInstantCommands({
       }
 
       if (typeof downloadMediaBuffer !== 'function' || !mediaCandidate.targetMsg) {
+        addLog('error', `Gagal memproses lampiran !ask dari ${actorTag}: fungsi downloadMediaBuffer atau targetMsg tidak tersedia.`);
         await sendSafe(
-          { text: 'Maaf, pengunduh media belum tersedia untuk memproses lampiran !ask ini.' },
+          { text: 'Maaf, lampiran media belum bisa diproses saat ini. Coba lagi sebentar ya.' },
           { quoted: msg }
         );
         return true;
@@ -421,8 +422,9 @@ async function handleInstantCommands({
       }
 
       if (!Buffer.isBuffer(mediaBuffer) || mediaBuffer.length === 0) {
+        addLog('warn', `Buffer media !ask dari ${actorTag} kosong setelah diunduh.`);
         await sendSafe(
-          { text: 'Maaf, data media kosong sehingga tidak bisa diteruskan ke !ask.' },
+          { text: 'Maaf, medianya gagal dibaca. Coba kirim ulang medianya ya.' },
           { quoted: msg }
         );
         return true;

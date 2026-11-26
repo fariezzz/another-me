@@ -28,6 +28,7 @@ const {
   convertImageToSticker,
   convertVideoOrGifToSticker,
   convertStickerToPng,
+  convertSoundStickerToVideo,
   rewriteStickerExif,
   renderTextBlurImage,
   renderCapMeme,
@@ -2562,6 +2563,456 @@ test('!cap, !caphd, and !wm preserve audio when replying to a WhatsApp Sound Sti
       }
     };
     assert.equal(await restartedService.resolveSoundStickerAudio(silentCandidate), null);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('.toimg converts animated and static Sound Stickers into MP4 videos with audio while preserving silent image/GIF behavior', async () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const { execFile } = require('child_process');
+  const { promisify } = require('util');
+  const execFileAsync = promisify(execFile);
+
+  assert.equal(parseUtilityCommand('.tovid')?.command, 'toimg');
+  assert.equal(parseUtilityCommand('!tovideo')?.command, 'toimg');
+
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'another-me-toimg-sound-'));
+  const srcMp4 = path.join(tmpDir, 'src.mp4');
+  const outAnimMp4 = path.join(tmpDir, 'out_anim.mp4');
+  const outStaticMp4 = path.join(tmpDir, 'out_static.mp4');
+  const outSilentGifMp4 = path.join(tmpDir, 'out_silent_gif.mp4');
+
+  try {
+    // Buat video MP4 2 detik bersuara -> ekstrak menjadi stiker animasi + audio Opus nyata
+    await execFileAsync(
+      process.env.FFMPEG_PATH || 'ffmpeg',
+      [
+        '-y',
+        '-f', 'lavfi', '-i', 'testsrc=size=320x320:rate=10:duration=2',
+        '-f', 'lavfi', '-i', 'sine=frequency=520:duration=2',
+        '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
+        '-c:a', 'aac', '-shortest',
+        srcMp4
+      ],
+      { timeout: 20000, windowsHide: true }
+    );
+    const soundStk = await convertVideoOrGifToSticker(fs.readFileSync(srcMp4), { includeAudio: true });
+    assert.equal(soundStk.hasAudio, true);
+
+    const samplePng = await sharp({
+      create: { width: 256, height: 256, channels: 4, background: { r: 240, g: 120, b: 30, alpha: 1 } }
+    })
+      .png()
+      .toBuffer();
+    const staticStickerBuf = await convertImageToSticker(samplePng);
+
+    // 1. Konversi langsung stiker suara diam menjadi MP4 bersuara
+    const staticVidRes = await convertSoundStickerToVideo(staticStickerBuf, soundStk.audioBuffer);
+    assert.equal(staticVidRes.kind, 'video');
+    assert.equal(staticVidRes.hasAudio, true);
+    fs.writeFileSync(outStaticMp4, staticVidRes.buffer);
+    const staticInfo = await probeVideoAudioInfo(outStaticMp4);
+    assert.equal(staticInfo.hasAudio, true, 'Hasil .toimg stiker suara diam wajib memiliki trek audio');
+
+    // 2. Uji router .toimg pada stiker suara bergerak -> video MP4 bersuara (TANPA gifPlayback)
+    const sent = [];
+    const mockSock = {
+      sendMessage: async (jid, content) => {
+        sent.push({ jid, content });
+        return { key: { id: `toimg-${sent.length}` } };
+      }
+    };
+
+    const makeQuotedStickerMsg = (cmd, stanzaId, isAnimated) => ({
+      key: { remoteJid: '628111@s.whatsapp.net', id: `req-${stanzaId}`, fromMe: true },
+      message: {
+        extendedTextMessage: {
+          text: cmd,
+          contextInfo: {
+            stanzaId,
+            quotedMessage: {
+              stickerMessage: {
+                mimetype: 'image/webp',
+                fileLength: isAnimated ? soundStk.stickerBuffer.length : staticStickerBuf.length,
+                isAnimated
+              }
+            }
+          }
+        }
+      }
+    });
+
+    await handleUtilityCommands({
+      waSocket: mockSock,
+      downloadMediaBuffer: async () => soundStk.stickerBuffer,
+      resolveStickerAudio: async () => ({
+        audioBuffer: soundStk.audioBuffer,
+        audioSeconds: soundStk.audioSeconds
+      }),
+      remoteJid: '628111@s.whatsapp.net',
+      senderKey: 'owner',
+      fromMe: true,
+      profile: { isKnown: true, name: 'Pemilik' },
+      messageText: '.toimg',
+      msg: makeQuotedStickerMsg('.toimg', 'anim-sound-1', true),
+      addLog: () => {}
+    });
+    assert.ok(Buffer.isBuffer(sent[0].content.video), '.toimg stiker suara bergerak wajib mengirim video');
+    assert.equal(sent[0].content.gifPlayback, undefined, 'Video bersuara tidak boleh diberi gifPlayback: true');
+    fs.writeFileSync(outAnimMp4, sent[0].content.video);
+    const animInfo = await probeVideoAudioInfo(outAnimMp4);
+    assert.equal(animInfo.hasAudio, true, 'Hasil .toimg stiker suara bergerak wajib memiliki trek audio');
+
+    // 3. Stiker bergerak TANPA suara tetap menjadi GIF (gifPlayback: true, tanpa audio)
+    await handleUtilityCommands({
+      waSocket: mockSock,
+      downloadMediaBuffer: async () => soundStk.stickerBuffer,
+      resolveStickerAudio: async () => null,
+      remoteJid: '628111@s.whatsapp.net',
+      senderKey: 'owner',
+      fromMe: true,
+      profile: { isKnown: true, name: 'Pemilik' },
+      messageText: '.toimg',
+      msg: makeQuotedStickerMsg('.toimg', 'anim-silent-1', true),
+      addLog: () => {}
+    });
+    assert.ok(Buffer.isBuffer(sent[1].content.video));
+    assert.equal(sent[1].content.gifPlayback, true);
+    fs.writeFileSync(outSilentGifMp4, sent[1].content.video);
+    const silentGifInfo = await probeVideoAudioInfo(outSilentGifMp4);
+    assert.equal(silentGifInfo.hasAudio, false);
+
+    // 4. Stiker diam TANPA suara tetap menjadi gambar PNG
+    await handleUtilityCommands({
+      waSocket: mockSock,
+      downloadMediaBuffer: async () => staticStickerBuf,
+      resolveStickerAudio: async () => null,
+      remoteJid: '628111@s.whatsapp.net',
+      senderKey: 'owner',
+      fromMe: true,
+      profile: { isKnown: true, name: 'Pemilik' },
+      messageText: '.toimg',
+      msg: makeQuotedStickerMsg('.toimg', 'static-silent-1', false),
+      addLog: () => {}
+    });
+    assert.ok(Buffer.isBuffer(sent[2].content.image));
+
+    // 5. Stiker bertanda bidang 24 yang gagal dipulihkan audionya TIDAK mengirim catatan teks ke chat WA,
+    //    hanya mengirim hasil medianya saja dan mencatat peringatan ke log.
+    const { RAW_WIRE_FIELDS_SYMBOL } = require('../src/whatsapp/audioStickerCodec');
+    const field24Msg = makeQuotedStickerMsg('.toimg', 'field24-no-audio', false);
+    Object.defineProperty(
+      field24Msg.message.extendedTextMessage.contextInfo.quotedMessage.stickerMessage,
+      RAW_WIRE_FIELDS_SYMBOL,
+      { value: [1, 2, 24], enumerable: false, configurable: true }
+    );
+    const toimgLogs = [];
+    const sentBeforeField24 = sent.length;
+    await handleUtilityCommands({
+      waSocket: mockSock,
+      downloadMediaBuffer: async () => staticStickerBuf,
+      resolveStickerAudio: async () => null,
+      remoteJid: '628111@s.whatsapp.net',
+      senderKey: 'owner',
+      fromMe: true,
+      profile: { isKnown: true, name: 'Pemilik' },
+      messageText: '.toimg',
+      msg: field24Msg,
+      addLog: (type, text) => toimgLogs.push({ type, text })
+    });
+    assert.equal(sent.length, sentBeforeField24 + 1, 'Tidak boleh ada balon catatan teks tambahan ke chat WhatsApp');
+    assert.ok(Buffer.isBuffer(sent[sentBeforeField24].content.image));
+    assert.ok(
+      toimgLogs.some((l) => l.type === 'warn' && l.text.includes('bidang 24')),
+      'Catatan ketiadaan audio wajib tetap tercatat di log aktivitas'
+    );
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('Sound Sticker nested Protobuf decode and on-demand PDO recovery for other senders work without triggering AI replies', async () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const { proto } = require('@whiskeysockets/baileys');
+  const {
+    installAudioStickerProtoPatch,
+    registerAudioForStickerMessage,
+    getStickerAudioMessage,
+    getRawWireFieldNumbers
+  } = require('../src/whatsapp/audioStickerCodec');
+  const BaileysService = require('../src/whatsapp/baileysService');
+  const ContextManager = require('../src/contextManager');
+  const KnowledgeManager = require('../src/knowledgeManager');
+  const LLMClient = require('../src/llmClient');
+  const SettingsStore = require('../src/settingsStore');
+
+  installAudioStickerProtoPatch();
+
+  // 1. Uji dekode bersarang: field 134 -> field 1 (Message) -> field 40 (ephemeralMessage) -> field 1 -> field 26 (StickerMessage + AudioMessage)
+  const nestedSha = Buffer.alloc(32, 0x33);
+  const nestedAud = {
+    url: 'https://mmg.whatsapp.net/v/t62.7114-24/nested-aud.enc',
+    mimetype: 'audio/ogg; codecs=opus',
+    fileSha256: Buffer.alloc(32, 0x34),
+    fileEncSha256: Buffer.alloc(32, 0x35),
+    mediaKey: Buffer.alloc(32, 0x36),
+    directPath: '/v/t62.7114-24/nested-aud.enc',
+    seconds: 8
+  };
+  const nestedStk = {
+    url: 'https://mmg.whatsapp.net/v/t62.15575-24/nested-stk.enc',
+    mimetype: 'image/webp',
+    fileSha256: nestedSha,
+    fileEncSha256: Buffer.alloc(32, 0x37),
+    mediaKey: Buffer.alloc(32, 0x38),
+    directPath: '/v/t62.15575-24/nested-stk.enc',
+    isAnimated: true
+  };
+  const innerWriter = proto.Message.encode({});
+  innerWriter.uint32((40 << 3) | 2).fork(); // ephemeralMessage
+  innerWriter.uint32((1 << 3) | 2).fork(); // FutureProofMessage.message
+  innerWriter.uint32((26 << 3) | 2).fork(); // stickerMessage
+  proto.Message.StickerMessage.encode(nestedStk, innerWriter);
+  innerWriter.uint32((24 << 3) | 0).int32(0); // premium = 0
+  proto.Message.AudioMessage.encode(nestedAud, innerWriter.uint32((26 << 3) | 2).fork()).ldelim();
+  innerWriter.ldelim().ldelim().ldelim();
+  const outerWriter = proto.Message.encode({});
+  outerWriter.uint32((134 << 3) | 2).fork();
+  outerWriter.uint32((1 << 3) | 2).bytes(innerWriter.finish());
+  outerWriter.ldelim();
+  const nestedDecoded = proto.Message.decode(outerWriter.finish());
+  assert.ok(nestedDecoded.stickerMessage, 'Stiker bersarang di dalam field 134 -> ephemeralMessage wajib diekstrak');
+  const nestedExtractedAudio = getStickerAudioMessage(nestedDecoded.stickerMessage);
+  assert.ok(nestedExtractedAudio, 'AudioMessage pada stiker bersarang wajib terdekode');
+  assert.equal(nestedExtractedAudio.seconds, 8);
+  assert.ok(getRawWireFieldNumbers(nestedDecoded.stickerMessage).includes(24));
+
+  // 2. Uji alur end-to-end On-Demand PDO (PLACEHOLDER_MESSAGE_RESEND) untuk stiker suara kiriman orang lain di grup
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'another-me-pdo-sound-'));
+  const soundCacheDir = path.join(tmpDir, 'sound-sticker-cache');
+  const logs = [];
+  try {
+    fs.writeFileSync(
+      path.join(tmpDir, 'persona.json'),
+      JSON.stringify({ general_persona: { identity: 'Test' }, categories: { default: { tone: 'Netral', few_shots: [] } } })
+    );
+    const settingsStore = new SettingsStore({ dataPath: tmpDir });
+    settingsStore.state = { serviceEnabled: true, whitelistOnly: false, replyGroups: true };
+
+    const service = new BaileysService({
+      llm: new LLMClient({ baseUrl: 'http://127.0.0.1:4000/v1beta/openai', model: 'gemma-4-26b-a4b-it' }),
+      contextManager: new ContextManager({ dataPath: tmpDir }),
+      knowledgeManager: new KnowledgeManager({ dataPath: tmpDir }),
+      settingsStore,
+      addLog: (type, text) => logs.push({ type, text }),
+      options: {
+        soundStickerCacheDir: soundCacheDir,
+        soundStickerPdoTimeoutMs: 1200
+      }
+    });
+
+    let burstQueuedCount = 0;
+    service.queueBurstMessage = () => {
+      burstQueuedCount += 1;
+    };
+
+    const otherStickerSha = Buffer.alloc(32, 0x91);
+    const recoveredOpusAudio = Buffer.from('OggS-recovered-via-pdo-from-other-sender');
+    const otherStkProto = {
+      url: 'https://mmg.whatsapp.net/v/t62.15575-24/other-stk.enc',
+      mimetype: 'image/webp',
+      fileSha256: otherStickerSha,
+      fileEncSha256: Buffer.alloc(32, 0x92),
+      mediaKey: Buffer.alloc(32, 0x93),
+      directPath: '/v/t62.15575-24/other-stk.enc',
+      isAnimated: true
+    };
+    const otherAudProto = {
+      url: 'https://mmg.whatsapp.net/v/t62.7114-24/other-aud.enc',
+      mimetype: 'audio/ogg; codecs=opus',
+      fileSha256: Buffer.alloc(32, 0x94),
+      fileEncSha256: Buffer.alloc(32, 0x95),
+      mediaKey: Buffer.alloc(32, 0x96),
+      directPath: '/v/t62.7114-24/other-aud.enc',
+      seconds: 7
+    };
+    registerAudioForStickerMessage(otherStkProto, otherAudProto);
+    const wmiBytes = proto.WebMessageInfo.encode({
+      key: {
+        remoteJid: '120363999@g.us',
+        fromMe: false,
+        id: 'ACCA05OTHERGROUP1',
+        participant: '888888@lid'
+      },
+      message: { stickerMessage: otherStkProto },
+      messageTimestamp: Math.floor(Date.now() / 1000) - 300
+    }).finish();
+
+    const pdoCalls = [];
+    service.waSocket = {
+      user: { id: '628111:1@s.whatsapp.net', lid: '111111:1@lid' },
+      requestPlaceholderResend: async (cleanKey) => {
+        pdoCalls.push(cleanKey);
+        // Simulasikan ponsel utama membalas PDO dengan WebMessageInfo utuh via messages.upsert
+        setTimeout(() => {
+          const decodedWmi = proto.WebMessageInfo.decode(wmiBytes);
+          service.handleMessagesUpsert({
+            messages: [decodedWmi],
+            type: 'notify',
+            requestId: 'pdo-stanza-1'
+          });
+        }, 30);
+        return 'pdo-stanza-1';
+      }
+    };
+    service.downloadMediaBuffer = async (target) => {
+      if (target?.message?.audioMessage) return recoveredOpusAudio;
+      return Buffer.alloc(16);
+    };
+
+    // 2a. Simulasikan stiker orang lain awalnya gagal dekripsi skmsg (stub CIPHERTEXT) tanpa memenuhi log
+    const logsBeforeStub = logs.length;
+    await service.handleMessagesUpsert({
+      messages: [
+        {
+          key: {
+            remoteJid: '120363999@g.us',
+            fromMe: false,
+            id: 'ACCA05OTHERGROUP1',
+            participant: '888888:17@lid'
+          },
+          messageStubType: 2,
+          messageStubParameters: ['No session found to decrypt message']
+        }
+      ],
+      type: 'notify'
+    });
+    assert.equal(logs.length, logsBeforeStub, 'Stub CIPHERTEXT non-fromMe tidak boleh memenuhi log aktivitas');
+
+    // 2b. Pemilik membalas stiker dengan !toimg (hasSoundMarkerField24 = true, audioMessage terpangkas)
+    const recovered = await service.resolveSoundStickerAudio({
+      kind: 'sticker',
+      source: 'quoted',
+      mimeType: 'image/webp',
+      fileSha256: otherStickerSha,
+      fileEncSha256: Buffer.alloc(32, 0x92),
+      directPath: '/v/t62.15575-24/other-stk.enc',
+      hasSoundMarkerField24: true,
+      audioMessage: null,
+      targetMsg: {
+        key: {
+          remoteJid: '120363999@g.us',
+          fromMe: false,
+          id: 'ACCA05OTHERGROUP1',
+          participant: '888888:17@lid'
+        },
+        message: { stickerMessage: { mimetype: 'image/webp', fileSha256: otherStickerSha } }
+      }
+    });
+    assert.equal(pdoCalls.length, 1, 'PDO wajib dipicu saat stiker bertanda bidang 24 tidak ada di cache');
+    assert.deepEqual(
+      pdoCalls[0],
+      {
+        remoteJid: '120363999@g.us',
+        fromMe: false,
+        id: 'ACCA05OTHERGROUP1',
+        participant: '888888@lid'
+      },
+      'Kunci PDO wajib membersihkan akhiran perangkat (:17) dari participant grup'
+    );
+    assert.ok(recovered, 'Audio stiker kiriman orang lain wajib pulih otomatis via PDO');
+    assert.deepEqual(recovered.audioBuffer, recoveredOpusAudio);
+    assert.equal(recovered.audioSeconds, 7);
+    assert.equal(burstQueuedCount, 0, 'Respons PDO stiker lama tidak boleh memicu balasan otomatis AI');
+
+    // Pastikan tersimpan di cache disk sehingga permintaan kedua langsung hit cache tanpa PDO ulang
+    const diskHit = service.soundStickerStore.find({ messageId: 'ACCA05OTHERGROUP1' });
+    assert.ok(diskHit);
+    assert.deepEqual(diskHit.audioBuffer, recoveredOpusAudio);
+
+    // 2c. Normalisasi kunci chat 1-lawan-1 wajib menghapus participant
+    const dmKey = service.normalizePeerMessageKey({
+      remoteJid: '628999:4@s.whatsapp.net',
+      fromMe: false,
+      id: 'DM-STK-1',
+      participant: '628999:4@s.whatsapp.net'
+    });
+    assert.deepEqual(dmKey, {
+      remoteJid: '628999@s.whatsapp.net',
+      fromMe: false,
+      id: 'DM-STK-1'
+    });
+
+    // 2d. Stiker biasa TANPA bidang 24 tidak boleh memicu PDO sama sekali
+    const silentRes = await service.resolveSoundStickerAudio({
+      kind: 'sticker',
+      source: 'quoted',
+      mimeType: 'image/webp',
+      fileSha256: Buffer.alloc(32, 0xaa),
+      hasSoundMarkerField24: false,
+      audioMessage: null,
+      targetMsg: {
+        key: { remoteJid: '120363999@g.us', fromMe: false, id: 'PLAIN-STK-1', participant: '888888@lid' },
+        message: { stickerMessage: { mimetype: 'image/webp' } }
+      }
+    });
+    assert.equal(silentRes, null);
+    assert.equal(pdoCalls.length, 1, 'Stiker biasa tanpa penanda suara bidang 24 tidak boleh memicu PDO');
+
+    // 2e. Bila ponsel utama merespons PDO tetapi tanpa AudioMessage, waiter langsung selesai tanpa menunggu timeout
+    service.waSocket.requestPlaceholderResend = async (cleanKey) => {
+      pdoCalls.push(cleanKey);
+      setTimeout(() => {
+        service.handleMessagesUpsert({
+          messages: [
+            {
+              key: cleanKey,
+              message: { stickerMessage: { mimetype: 'image/webp', isAnimated: true } }
+            }
+          ],
+          type: 'notify',
+          requestId: 'pdo-no-audio-2'
+        });
+      }, 20);
+      return 'pdo-no-audio-2';
+    };
+    await service.handleMessagesUpsert({
+      messages: [
+        {
+          key: { remoteJid: '120363999@g.us', fromMe: false, id: 'NO-AUD-PDO-1', participant: '777@lid' },
+          messageStubType: 2,
+          messageStubParameters: ['Message absent from node']
+        }
+      ],
+      type: 'notify'
+    });
+    const t0 = Date.now();
+    const noAudRes = await service.resolveSoundStickerAudio({
+      kind: 'sticker',
+      source: 'quoted',
+      mimeType: 'image/webp',
+      fileSha256: Buffer.alloc(32, 0xbb),
+      hasSoundMarkerField24: true,
+      audioMessage: null,
+      targetMsg: {
+        key: { remoteJid: '120363999@g.us', fromMe: false, id: 'NO-AUD-PDO-1', participant: '777@lid' },
+        message: { stickerMessage: { mimetype: 'image/webp' } }
+      }
+    });
+    const elapsedMs = Date.now() - t0;
+    assert.equal(noAudRes, null);
+    assert.ok(elapsedMs < 600, `Waiter PDO tanpa audio harus selesai cepat tanpa menunggu timeout (got ${elapsedMs}ms)`);
+    assert.ok(
+      logs.some((l) => l.text.includes('priorStub=2(Message absent from node)') && l.text.includes('pdo=no_audio')),
+      'Log diagnostik wajib menyertakan priorStub dan status pdo=no_audio'
+    );
+
+    service.shutdown();
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }

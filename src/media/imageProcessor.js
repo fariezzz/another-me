@@ -164,11 +164,12 @@ const DEFAULT_CAP_MAX_DIM = resolveCapMaxDim();
 const DEFAULT_CAP_FONT_SCALE = resolveCapFontScale();
 
 class MediaValidationError extends Error {
-  constructor(code, userMessage) {
-    super(userMessage);
+  constructor(code, userMessage, logDetail = '') {
+    super(logDetail || userMessage);
     this.name = 'MediaValidationError';
     this.code = code;
     this.userMessage = userMessage;
+    this.logDetail = logDetail || '';
   }
 }
 
@@ -627,7 +628,8 @@ async function convertVideoOrGifToSticker(
       }
       throw new MediaValidationError(
         'FFMPEG_MISSING',
-        'Maaf, konversi video menjadi stiker bergerak memerlukan FFmpeg yang terpasang di sistem.'
+        'Maaf, fitur ubah video jadi stiker sedang belum bisa dipakai saat ini.',
+        'FFmpeg tidak terpasang di sistem untuk konversi video menjadi stiker bergerak.'
       );
     }
     if (err instanceof MediaValidationError) throw err;
@@ -777,11 +779,171 @@ async function convertAnimatedStickerToGif(webpBuffer, { ffmpegPath = FFMPEG_PAT
 }
 
 /**
+ * Mengubah Stiker Suara WhatsApp (WebP diam maupun bergerak + audio OGG/Opus)
+ * menjadi video MP4 H.264 bersuara (AAC) untuk perintah !toimg / .toimg.
+ */
+async function convertSoundStickerToVideo(
+  webpBuffer,
+  audioBuffer,
+  { ffmpegPath = FFMPEG_PATH, maxDurationSec = 30 } = {}
+) {
+  const meta = await validateImageBuffer(webpBuffer, { requireWebp: true });
+  if (!Buffer.isBuffer(audioBuffer) || audioBuffer.length === 0) {
+    throw new MediaValidationError(
+      'EMPTY_AUDIO',
+      'Maaf, suara pada stiker ini belum bisa diproses. Coba lagi ya.',
+      'Data audio stiker suara kosong (EMPTY_AUDIO).'
+    );
+  }
+
+  const isAnimated = Boolean(meta.pages && meta.pages > 1);
+  const safeMaxDuration = clampNumber(Number(maxDurationSec), 30, 3, 60);
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'another-me-tovid-'));
+  const audioPath = path.join(tmpDir, 'audio.ogg');
+  const mp4Path = path.join(tmpDir, 'output.mp4');
+
+  try {
+    fs.writeFileSync(audioPath, audioBuffer);
+    let args;
+
+    if (isAnimated) {
+      const gifBuffer = await sharp(webpBuffer, {
+        animated: true,
+        limitInputPixels: LIMIT_INPUT_PIXELS
+      })
+        .flatten({ background: '#ffffff' })
+        .gif()
+        .toBuffer();
+      const gifPath = path.join(tmpDir, 'input.gif');
+      fs.writeFileSync(gifPath, gifBuffer);
+
+      args = [
+        '-y',
+        '-stream_loop',
+        '-1',
+        '-i',
+        gifPath,
+        '-i',
+        audioPath,
+        '-t',
+        String(safeMaxDuration),
+        '-map',
+        '0:v:0',
+        '-map',
+        '1:a:0',
+        '-vf',
+        'scale=trunc(iw/2)*2:trunc(ih/2)*2',
+        '-c:v',
+        'libx264',
+        '-preset',
+        'veryfast',
+        '-crf',
+        '22',
+        '-pix_fmt',
+        'yuv420p',
+        '-c:a',
+        'aac',
+        '-b:a',
+        '128k',
+        '-movflags',
+        '+faststart',
+        '-shortest',
+        mp4Path
+      ];
+    } else {
+      const framePng = await sharp(webpBuffer, {
+        limitInputPixels: LIMIT_INPUT_PIXELS,
+        page: 0
+      })
+        .flatten({ background: '#ffffff' })
+        .png()
+        .toBuffer();
+      const framePath = path.join(tmpDir, 'frame.png');
+      fs.writeFileSync(framePath, framePng);
+
+      args = [
+        '-y',
+        '-loop',
+        '1',
+        '-framerate',
+        '15',
+        '-i',
+        framePath,
+        '-i',
+        audioPath,
+        '-t',
+        String(safeMaxDuration),
+        '-map',
+        '0:v:0',
+        '-map',
+        '1:a:0',
+        '-vf',
+        'scale=trunc(iw/2)*2:trunc(ih/2)*2',
+        '-c:v',
+        'libx264',
+        '-tune',
+        'stillimage',
+        '-preset',
+        'veryfast',
+        '-crf',
+        '22',
+        '-pix_fmt',
+        'yuv420p',
+        '-c:a',
+        'aac',
+        '-b:a',
+        '128k',
+        '-movflags',
+        '+faststart',
+        '-shortest',
+        mp4Path
+      ];
+    }
+
+    await execFileAsync(ffmpegPath, args, {
+      timeout: 30000,
+      maxBuffer: 2 * 1024 * 1024,
+      windowsHide: true
+    });
+
+    const mp4Buffer = fs.readFileSync(mp4Path);
+    return {
+      kind: 'video',
+      buffer: mp4Buffer,
+      mimeType: 'video/mp4',
+      isAnimated,
+      hasAudio: true,
+      width: meta.width,
+      height: meta.pageHeight || meta.height
+    };
+  } catch (err) {
+    if (err && err.code === 'ENOENT') {
+      throw new MediaValidationError(
+        'FFMPEG_MISSING',
+        'Maaf, fitur ubah stiker bersuara jadi video sedang belum bisa dipakai saat ini.',
+        'FFmpeg tidak terpasang di sistem untuk mengubah stiker bersuara menjadi video.'
+      );
+    }
+    if (err instanceof MediaValidationError) throw err;
+    throw new Error(`FFmpeg gagal mengubah stiker bersuara menjadi video: ${err.message}`);
+  } finally {
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    } catch {}
+  }
+}
+
+/**
  * Konversi cerdas untuk perintah !toimg:
- * - Stiker diam -> gambar Portable Network Graphics (PNG)
- * - Stiker bergerak -> media GIF WhatsApp (MP4 gifPlayback: true)
+ * - Stiker bersuara (diam maupun bergerak) -> video MP4 bersuara
+ * - Stiker diam tanpa suara -> gambar Portable Network Graphics (PNG)
+ * - Stiker bergerak tanpa suara -> media GIF WhatsApp (MP4 gifPlayback: true)
  */
 async function convertStickerToMedia(webpBuffer, options = {}) {
+  if (Buffer.isBuffer(options?.audioBuffer) && options.audioBuffer.length > 0) {
+    return await convertSoundStickerToVideo(webpBuffer, options.audioBuffer, options);
+  }
+
   const meta = await validateImageBuffer(webpBuffer, { requireWebp: true });
   const isAnimated = Boolean(meta.pages && meta.pages > 1);
 
@@ -2291,7 +2453,8 @@ async function renderCapVideoOrGif(
     if (err && err.code === 'ENOENT') {
       throw new MediaValidationError(
         'FFMPEG_MISSING',
-        'Maaf, perintah !cap pada video atau GIF memerlukan FFmpeg yang terpasang di sistem.'
+        'Maaf, fitur caption untuk video atau GIF sedang belum bisa dipakai saat ini.',
+        'FFmpeg tidak terpasang di sistem untuk perintah !cap pada video atau GIF.'
       );
     }
     if (err instanceof MediaValidationError) throw err;
@@ -2469,7 +2632,8 @@ async function cropVideoOrGifToSquare(
       }
       throw new MediaValidationError(
         'FFMPEG_MISSING',
-        'Maaf, pemotongan video 1:1 memerlukan FFmpeg yang terpasang di sistem.'
+        'Maaf, fitur potong video 1:1 sedang belum bisa dipakai saat ini.',
+        'FFmpeg tidak terpasang di sistem untuk pemotongan video 1:1.'
       );
     }
     if (err instanceof MediaValidationError) throw err;
@@ -2518,6 +2682,7 @@ module.exports = {
   convertVideoOrGifToSticker,
   convertStickerToPng,
   convertAnimatedStickerToGif,
+  convertSoundStickerToVideo,
   convertStickerToMedia,
   rewriteStickerExif,
   renderTextBlurImage,

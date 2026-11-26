@@ -13,8 +13,21 @@ const {
   useMultiFileAuthState,
   DisconnectReason,
   fetchLatestBaileysVersion,
-  downloadMediaMessage
+  downloadMediaMessage,
+  jidNormalizedUser
 } = require('@whiskeysockets/baileys');
+
+function normalizeJidWithoutDevice(jid) {
+  const raw = String(jid || '').trim();
+  if (!raw) return '';
+  if (typeof jidNormalizedUser === 'function') {
+    try {
+      const normalized = jidNormalizedUser(raw);
+      if (normalized) return normalized;
+    } catch {}
+  }
+  return raw.replace(/:\d+(?=@)/, '');
+}
 
 function buildProxyAgent() {
   if (!process.env.HTTPS_PROXY) return undefined;
@@ -215,7 +228,7 @@ class BaileysService {
     this.processedAskMessageIds = new Set();
 
     // Cache metadata & buffer audio Stiker Suara terbaru (memori + disk data/sound-sticker-cache/)
-    // agar !cap / !caphd / !wm tetap mempertahankan suara meski quotedMessage dipangkas klien WhatsApp
+    // agar !toimg / !cap / !caphd / !wm tetap mempertahankan suara meski quotedMessage dipangkas klien WhatsApp
     // dan tetap bertahan meskipun bot di-restart.
     this.soundStickerCache = new Map();
     this.soundStickerBufferKeys = [];
@@ -224,6 +237,13 @@ class BaileysService {
       new SoundStickerStore({
         cacheDir: options.soundStickerCacheDir
       });
+
+    // Pemulihan on-demand via PDO (PLACEHOLDER_MESSAGE_RESEND) ke ponsel utama saat stiker suara
+    // kiriman orang lain (atau stiker lama) belum sempat terekam di cache RAM maupun disk.
+    this.soundStickerPdoTimeoutMs = options.soundStickerPdoTimeoutMs ?? 8500;
+    this.pendingSoundStickerWaiters = new Map();
+    this.onDemandSoundStickerPdoIds = new Map();
+    this.recentCiphertextStubs = new Map();
 
     // Pelindung anti-spam berlapis untuk perintah utilitas WhatsApp
     this.commandAntiSpam =
@@ -376,6 +396,240 @@ class BaileysService {
       .catch(() => {});
   }
 
+  buildSoundStickerLookupKeys({ messageId = '', fileSha256 = null, fileEncSha256 = null, directPath = '' } = {}) {
+    const keys = [];
+    const msgId = String(messageId || '').trim();
+    if (msgId) keys.push(`id:${msgId}`);
+    const shaKey = this.encodeShaKey(fileSha256);
+    if (shaKey) keys.push(`sha:${shaKey}`);
+    const encShaKey = this.encodeShaKey(fileEncSha256);
+    if (encShaKey) keys.push(`enc:${encShaKey}`);
+    const dPath = String(directPath || '').trim();
+    if (dPath) keys.push(`path:${dPath}`);
+    return keys;
+  }
+
+  normalizePeerMessageKey(rawKey) {
+    if (!rawKey || typeof rawKey !== 'object') return null;
+    const remoteJid = normalizeJidWithoutDevice(rawKey.remoteJid);
+    const id = String(rawKey.id || '').trim();
+    if (!remoteJid || !id) return null;
+    const isGroup = remoteJid.endsWith('@g.us');
+    const clean = {
+      remoteJid,
+      fromMe: Boolean(rawKey.fromMe),
+      id
+    };
+    if (isGroup && rawKey.participant) {
+      const normalizedParticipant = normalizeJidWithoutDevice(rawKey.participant);
+      if (normalizedParticipant) {
+        clean.participant = normalizedParticipant;
+      }
+    }
+    return clean;
+  }
+
+  rememberCiphertextStub(msgId, info) {
+    const id = String(msgId || '').trim();
+    if (!id) return;
+    this.recentCiphertextStubs.delete(id);
+    this.recentCiphertextStubs.set(id, info);
+    while (this.recentCiphertextStubs.size > 200) {
+      const oldest = this.recentCiphertextStubs.keys().next().value;
+      if (oldest === undefined) break;
+      this.recentCiphertextStubs.delete(oldest);
+    }
+  }
+
+  markOnDemandSoundStickerPdo(msgId) {
+    const id = String(msgId || '').trim();
+    if (!id) return;
+    const now = Date.now();
+    for (const [k, exp] of this.onDemandSoundStickerPdoIds.entries()) {
+      if (exp <= now) this.onDemandSoundStickerPdoIds.delete(k);
+    }
+    this.onDemandSoundStickerPdoIds.set(id, now + 20 * 1000);
+    while (this.onDemandSoundStickerPdoIds.size > 100) {
+      const oldest = this.onDemandSoundStickerPdoIds.keys().next().value;
+      if (oldest === undefined) break;
+      this.onDemandSoundStickerPdoIds.delete(oldest);
+    }
+  }
+
+  isOnDemandSoundStickerPdo(msgId) {
+    const id = String(msgId || '').trim();
+    if (!id) return false;
+    const exp = this.onDemandSoundStickerPdoIds.get(id);
+    if (!exp) return false;
+    if (exp <= Date.now()) {
+      this.onDemandSoundStickerPdoIds.delete(id);
+      return false;
+    }
+    return true;
+  }
+
+  waitForSoundStickerRecovery(lookupParams, timeoutMs = this.soundStickerPdoTimeoutMs) {
+    const keys = this.buildSoundStickerLookupKeys(lookupParams);
+    if (keys.length === 0) {
+      return { promise: Promise.resolve(null), cancel: () => {} };
+    }
+
+    let settled = false;
+    let resolveFn = null;
+    let timer = null;
+
+    const cleanup = () => {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      for (const k of keys) {
+        const bucket = this.pendingSoundStickerWaiters.get(k);
+        if (!bucket) continue;
+        bucket.delete(waiter);
+        if (bucket.size === 0) {
+          this.pendingSoundStickerWaiters.delete(k);
+        }
+      }
+    };
+
+    const waiter = {
+      keys,
+      resolve(payload) {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        if (resolveFn) resolveFn(payload);
+      }
+    };
+
+    const promise = new Promise((resolve) => {
+      resolveFn = resolve;
+      for (const k of keys) {
+        let bucket = this.pendingSoundStickerWaiters.get(k);
+        if (!bucket) {
+          bucket = new Set();
+          this.pendingSoundStickerWaiters.set(k, bucket);
+        }
+        bucket.add(waiter);
+      }
+      timer = setTimeout(() => {
+        waiter.resolve({ audioMessage: null, timedOut: true });
+      }, Math.max(500, Number(timeoutMs) || 8500));
+    });
+
+    return {
+      promise,
+      cancel(payload = null) {
+        waiter.resolve(payload);
+      }
+    };
+  }
+
+  notifySoundStickerWaiters(lookupParams, payload) {
+    const keys = this.buildSoundStickerLookupKeys(lookupParams);
+    if (keys.length === 0) return false;
+    const matched = new Set();
+    for (const k of keys) {
+      const bucket = this.pendingSoundStickerWaiters.get(k);
+      if (!bucket) continue;
+      for (const waiter of bucket) {
+        matched.add(waiter);
+      }
+    }
+    if (matched.size === 0) return false;
+    for (const waiter of matched) {
+      waiter.resolve(payload);
+    }
+    return true;
+  }
+
+  async requestSoundStickerPlaceholderResend(candidate, lookupParams) {
+    if (!this.waSocket || typeof this.waSocket.requestPlaceholderResend !== 'function') {
+      return { outcome: 'unsupported' };
+    }
+    const cleanKey = this.normalizePeerMessageKey(candidate.targetMsg?.key);
+    if (!cleanKey) {
+      return { outcome: 'invalid_key' };
+    }
+
+    this.markOnDemandSoundStickerPdo(cleanKey.id);
+    const { promise: waiterPromise, cancel: cancelWaiter } = this.waitForSoundStickerRecovery(
+      lookupParams,
+      this.soundStickerPdoTimeoutMs
+    );
+
+    this.addLog(
+      'info',
+      `Stiker suara (${cleanKey.id}) belum ada di cache; meminta salinan utuh ke ponsel utama via PDO...`
+    );
+
+    Promise.resolve()
+      .then(() => this.waSocket.requestPlaceholderResend(cleanKey))
+      .catch((err) => {
+        this.addLog('warn', `Permintaan PDO stiker suara (${cleanKey.id}) gagal: ${err.message}`);
+        cancelWaiter({ audioMessage: null, pdoError: err.message });
+      });
+
+    const recovered = await waiterPromise;
+
+    if (recovered && recovered.audioMessage) {
+      try {
+        const audioBuffer = await this.downloadMediaBuffer({
+          key: recovered.messageKey || cleanKey,
+          message: { audioMessage: recovered.audioMessage }
+        });
+        if (Buffer.isBuffer(audioBuffer) && audioBuffer.length > 0) {
+          const audioSeconds = Math.max(1, Math.round(Number(recovered.audioMessage.seconds) || 5));
+          this.rememberSoundSticker({
+            ...lookupParams,
+            messageId: cleanKey.id,
+            audioMessage: recovered.audioMessage,
+            audioBuffer,
+            audioSeconds,
+            messageKey: recovered.messageKey || cleanKey
+          });
+          this.addLog(
+            'info',
+            `Audio stiker suara (${cleanKey.id}) berhasil dipulihkan dari ponsel utama via PDO (${audioSeconds} detik, ${audioBuffer.length} byte).`
+          );
+          return { outcome: 'recovered', audioBuffer, audioSeconds };
+        }
+      } catch (err) {
+        this.addLog('warn', `Gagal mengunduh audio stiker hasil PDO (${cleanKey.id}): ${err.message}`);
+        return { outcome: 'download_failed', error: err.message };
+      }
+    }
+
+    // Cek ulang cache bila jalur paralel sempat mengisi tepat sebelum waiter berakhir
+    const cachedAfter = this.lookupSoundStickerCache(lookupParams);
+    if (cachedAfter && Buffer.isBuffer(cachedAfter.audioBuffer) && cachedAfter.audioBuffer.length > 0) {
+      return {
+        outcome: 'recovered',
+        audioBuffer: cachedAfter.audioBuffer,
+        audioSeconds: Math.max(1, Math.round(Number(cachedAfter.audioSeconds) || 5))
+      };
+    }
+    if (this.soundStickerStore) {
+      const diskAfter = this.soundStickerStore.find(lookupParams);
+      if (diskAfter) {
+        return { outcome: 'recovered', ...diskAfter };
+      }
+    }
+
+    if (recovered?.pdoRespondedWithoutAudio) {
+      return {
+        outcome: 'responded_without_audio',
+        msgFields: recovered.msgFields || null,
+        stkFields: recovered.stkFields || null
+      };
+    }
+    if (recovered?.pdoError) {
+      return { outcome: 'error', error: recovered.pdoError };
+    }
+    return { outcome: 'timeout' };
+  }
+
   async resolveSoundStickerAudio(candidate) {
     if (!candidate || candidate.kind !== 'sticker') return null;
 
@@ -457,12 +711,35 @@ class BaileysService {
       }
     }
 
+    // Lapis 4: Pemulihan on-demand via PDO (PLACEHOLDER_MESSAGE_RESEND) langsung ke ponsel utama
+    // Hanya dijalankan bila stiker membawa penanda suara bidang 24 agar stiker biasa tetap nol jeda.
+    let pdoSummary = '';
+    if (candidate.hasSoundMarkerField24) {
+      const pdoResult = await this.requestSoundStickerPlaceholderResend(candidate, lookupParams);
+      if (pdoResult.outcome === 'recovered' && Buffer.isBuffer(pdoResult.audioBuffer)) {
+        return {
+          audioBuffer: pdoResult.audioBuffer,
+          audioSeconds: pdoResult.audioSeconds
+        };
+      }
+      if (pdoResult.outcome === 'responded_without_audio') {
+        pdoSummary = `, pdo=no_audio(msgFields=[${(pdoResult.msgFields || []).join(',')}], stkFields=[${(pdoResult.stkFields || []).join(',')}])`;
+      } else if (pdoResult.outcome && pdoResult.outcome !== 'unsupported') {
+        pdoSummary = `, pdo=${pdoResult.outcome}`;
+      }
+    }
+
     const msgFields = getRawWireFieldNumbers(candidate.targetMsg?.message);
     const stkFields = getRawWireFieldNumbers(candidate.targetMsg?.message?.stickerMessage);
-    if (msgFields || stkFields) {
+    const stanzaId = candidate.targetMsg?.key?.id || '';
+    const priorStub = stanzaId ? this.recentCiphertextStubs.get(stanzaId) : null;
+    const stubSummary = priorStub
+      ? `, priorStub=${priorStub.stubType}(${(priorStub.params || []).join('|')})`
+      : '';
+    if (msgFields || stkFields || pdoSummary || stubSummary) {
       this.addLog(
         'info',
-        `Diagnostik stiker dibalas: audio tidak ditemukan (stanza=${candidate.targetMsg?.key?.id || '-'}, msgFields=[${(msgFields || []).join(',')}], stkFields=[${(stkFields || []).join(',')}]).`
+        `Diagnostik stiker dibalas: audio tidak ditemukan (stanza=${stanzaId || '-'}, msgFields=[${(msgFields || []).join(',')}], stkFields=[${(stkFields || []).join(',')}]${stubSummary}${pdoSummary}).`
       );
     }
     return null;
@@ -1037,8 +1314,11 @@ class BaileysService {
       for (const msg of m.messages) {
         if (!msg.key) continue;
 
+        const isPdoResend = Boolean(m.requestId);
+        const isOnDemandPdo = Boolean(msg.key.id && this.isOnDemandSoundStickerPdo(msg.key.id));
+
         // 1. Abaikan pesan yang baru saja dikirim bot ini sendiri agar tidak terjadi infinite loop
-        if (msg.key.id && this.sentMessageIds.has(msg.key.id)) continue;
+        if (!isOnDemandPdo && msg.key.id && this.sentMessageIds.has(msg.key.id)) continue;
 
         const remoteJid = msg.key.remoteJid;
         if (!remoteJid) continue;
@@ -1046,7 +1326,7 @@ class BaileysService {
 
         // Untuk event 'append' (sinkronisasi perangkat/offline), hanya terima pesan baru (< 60 detik)
         // dan khusus untuk perintah '!' agar riwayat chat lama tidak pernah diproses ulang.
-        if (isAppend) {
+        if (isAppend && !isOnDemandPdo) {
           const msgTs = getMessageTimestampSeconds(msg);
           if (!msgTs || Math.abs(nowSeconds - msgTs) > 60) continue;
         }
@@ -1056,31 +1336,86 @@ class BaileysService {
           Boolean(msg.key.fromMe) ||
           (isGroup &&
             (this.isOwnUserJid(msg.key.participant) || this.isOwnUserJid(msg.key.participantAlt)));
+
+        // Rekam diam-diam stub CIPHERTEXT pengirim lain agar diagnostik !toimg/!cap dapat
+        // mengetahui jika stiker sebelumnya gagal dekripsi, tanpa memenuhi log aktivitas.
+        if (!isFromMe && msg.messageStubType && !msg.message && msg.key.id) {
+          this.rememberCiphertextStub(msg.key.id, {
+            stubType: msg.messageStubType,
+            params: Array.isArray(msg.messageStubParameters) ? msg.messageStubParameters : [],
+            remoteJid,
+            ts: Date.now()
+          });
+        }
+
         const normalizedMessage = unwrapWhatsAppMessage(msg.message);
 
         const isSticker = Boolean(normalizedMessage?.stickerMessage);
         if (isSticker) {
           const incomingStickerAudio = getStickerAudioMessage(normalizedMessage.stickerMessage);
+          const stickerLookup = {
+            messageId: msg.key.id,
+            fileSha256: normalizedMessage.stickerMessage.fileSha256,
+            fileEncSha256: normalizedMessage.stickerMessage.fileEncSha256,
+            directPath: normalizedMessage.stickerMessage.directPath
+          };
           if (incomingStickerAudio) {
             this.rememberSoundSticker({
-              messageId: msg.key.id,
-              fileSha256: normalizedMessage.stickerMessage.fileSha256,
-              fileEncSha256: normalizedMessage.stickerMessage.fileEncSha256,
-              directPath: normalizedMessage.stickerMessage.directPath,
+              ...stickerLookup,
               audioMessage: incomingStickerAudio,
               audioSeconds: incomingStickerAudio.seconds,
               messageKey: msg.key
+            });
+            this.notifySoundStickerWaiters(stickerLookup, {
+              audioMessage: incomingStickerAudio,
+              messageKey: msg.key,
+              stickerMessage: normalizedMessage.stickerMessage
             });
             this.cacheIncomingSoundStickerAudioAsync({
               msgKey: msg.key,
               stickerMessage: normalizedMessage.stickerMessage,
               audioMessage: incomingStickerAudio
             });
+            const srcTag = `${isFromMe ? 'fromMe' : 'lain'}${isGroup ? ' [Grup]' : ''}${isPdoResend ? ' [PDO]' : ''}`;
             this.addLog(
               'info',
-              `Stiker suara masuk terdeteksi (${incomingStickerAudio.seconds || 0} detik, ${incomingStickerAudio.mimetype || 'audio'}) dan disimpan ke cache.`
+              `Stiker suara masuk terdeteksi (${incomingStickerAudio.seconds || 0} detik, ${incomingStickerAudio.mimetype || 'audio'}, ${srcTag}) dan disimpan ke cache.`
             );
+          } else {
+            const rawStkFields = getRawWireFieldNumbers(normalizedMessage.stickerMessage);
+            const rawMsgFields =
+              getRawWireFieldNumbers(normalizedMessage) || getRawWireFieldNumbers(msg.message);
+            if (isOnDemandPdo || isPdoResend) {
+              this.notifySoundStickerWaiters(stickerLookup, {
+                audioMessage: null,
+                pdoRespondedWithoutAudio: true,
+                msgFields: rawMsgFields,
+                stkFields: rawStkFields
+              });
+            }
+            if (Array.isArray(rawStkFields) && rawStkFields.includes(24)) {
+              const srcTag = `${isFromMe ? 'fromMe' : 'lain'}${isGroup ? ' [Grup]' : ''}${isPdoResend ? ' [PDO]' : ''}`;
+              this.addLog(
+                'info',
+                `Stiker masuk bertanda suara (bidang 24) tetapi AudioMessage tidak ditemukan (stanza=${msg.key.id || '-'}, ${srcTag}, msgFields=[${(rawMsgFields || []).join(',')}], stkFields=[${rawStkFields.join(',')}]).`
+              );
+            }
           }
+        } else if (isOnDemandPdo && msg.key.id) {
+          this.notifySoundStickerWaiters(
+            { messageId: msg.key.id },
+            {
+              audioMessage: null,
+              pdoRespondedWithoutAudio: true,
+              msgFields: getRawWireFieldNumbers(msg.message),
+              stkFields: null
+            }
+          );
+        }
+
+        // Jangan biarkan respons PDO pemulihan stiker lama jatuh ke balasan AI atau eksekusi ulang perintah
+        if (isOnDemandPdo) {
+          continue;
         }
         let messageText =
           normalizedMessage?.conversation ||
@@ -1400,6 +1735,15 @@ class BaileysService {
       if (burst.timer) clearTimeout(burst.timer);
     }
     this.pendingBursts.clear();
+    const waitersToClear = new Set();
+    for (const bucket of this.pendingSoundStickerWaiters.values()) {
+      for (const waiter of bucket) waitersToClear.add(waiter);
+    }
+    for (const waiter of waitersToClear) {
+      waiter.resolve({ audioMessage: null, shutdown: true });
+    }
+    this.pendingSoundStickerWaiters.clear();
+    this.onDemandSoundStickerPdoIds.clear();
     this.cleanupPreviousSocket();
   }
 }

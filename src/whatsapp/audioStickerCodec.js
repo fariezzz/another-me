@@ -259,6 +259,54 @@ function getRawWireFieldNumbers(obj) {
 }
 
 /**
+ * Daftar nomor bidang FutureProofMessage yang menyimpan `proto.Message` di bidang 1.
+ */
+const NESTED_FUTURE_PROOF_FIELDS = [134, 40, 37, 55, 59, 74, 85, 53, 62, 64, 70];
+
+/**
+ * Mencari semua bidang length-delimited (wireType 2) dengan nomor >= minFieldNum
+ * pada raw Protobuf bytes, mengembalikan daftar `{ fieldNum, bytes }`.
+ */
+function findLengthDelimitedFieldsFrom(bytes, minFieldNum) {
+  if (!(bytes instanceof Uint8Array) || bytes.length === 0) return [];
+  const results = [];
+  let pos = 0;
+  const end = bytes.length;
+  while (pos < end) {
+    const tagRes = readProtobufVarint(bytes, pos, end);
+    if (!tagRes) break;
+    const fieldNum = tagRes.value >>> 3;
+    const wireType = tagRes.value & 0x7;
+    pos = tagRes.nextPos;
+    if (fieldNum === 0) break;
+    if (wireType === 0) {
+      const valRes = readProtobufVarint(bytes, pos, end);
+      if (!valRes) break;
+      pos = valRes.nextPos;
+    } else if (wireType === 1) {
+      pos += 8;
+      if (pos > end) break;
+    } else if (wireType === 2) {
+      const lenRes = readProtobufVarint(bytes, pos, end);
+      if (!lenRes) break;
+      const len = lenRes.value;
+      pos = lenRes.nextPos;
+      if (pos + len > end) break;
+      if (fieldNum >= minFieldNum) {
+        results.push({ fieldNum, bytes: bytes.subarray(pos, pos + len) });
+      }
+      pos += len;
+    } else if (wireType === 5) {
+      pos += 4;
+      if (pos > end) break;
+    } else {
+      break;
+    }
+  }
+  return results;
+}
+
+/**
  * Mengekstrak AudioMessage yang tertanam langsung di field 26 pada StickerMessage
  * (baik di dalam pembungkus field 134 maupun langsung di top-level field 26).
  */
@@ -266,26 +314,56 @@ function extractAudioFromStickerBytes(stickerBytes) {
   const audioBytes = findLengthDelimitedField(stickerBytes, 26);
   if (!audioBytes || audioBytes.length === 0) return null;
   try {
-    return proto.Message.AudioMessage.decode(audioBytes);
+    const decoded = proto.Message.AudioMessage.decode(audioBytes);
+    if (
+      !decoded ||
+      (!decoded.url && !decoded.directPath && !decoded.mimetype && !(decoded.mediaKey && decoded.mediaKey.length > 0))
+    ) {
+      return null;
+    }
+    return decoded;
   } catch {
     return null;
   }
 }
 
 /**
- * Mengekstrak StickerMessage + AudioMessage dari raw bytes `proto.Message` yang
- * membawa field 134 (`audioStickerMessage`).
+ * Menelusuri raw bytes `proto.Message` secara rekursif (maks 5 lapis) untuk menemukan
+ * `StickerMessage` (bidang 26) meskipun dibungkus `ephemeralMessage`, `associatedChildMessage`,
+ * `lottieStickerMessage`, `deviceSentMessage`, atau pembungkus FutureProofMessage bersarang lainnya.
  */
-function extractAudioStickerFromRawMessageBytes(rawBytes) {
-  const fp134 = findLengthDelimitedField(rawBytes, 134);
-  if (!fp134 || fp134.length === 0) return null;
+function findNestedStickerBytesInMessageBytes(msgBytes, depth = 0) {
+  if (!(msgBytes instanceof Uint8Array) || msgBytes.length === 0 || depth > 5) return null;
 
-  const innerMsgBytes = findLengthDelimitedField(fp134, 1);
-  if (!innerMsgBytes || innerMsgBytes.length === 0) return null;
+  const directSticker = findLengthDelimitedField(msgBytes, 26);
+  if (directSticker && directSticker.length > 0) {
+    return directSticker;
+  }
 
-  const stickerBytes = findLengthDelimitedField(innerMsgBytes, 26);
+  for (const wrapperField of NESTED_FUTURE_PROOF_FIELDS) {
+    const wrapperBytes = findLengthDelimitedField(msgBytes, wrapperField);
+    if (!wrapperBytes || wrapperBytes.length === 0) continue;
+    const innerMsg = findLengthDelimitedField(wrapperBytes, 1);
+    if (!innerMsg || innerMsg.length === 0) continue;
+    const found = findNestedStickerBytesInMessageBytes(innerMsg, depth + 1);
+    if (found) return found;
+  }
+
+  // deviceSentMessage (field 31) menyimpan proto.Message di field 2
+  const dsmBytes = findLengthDelimitedField(msgBytes, 31);
+  if (dsmBytes && dsmBytes.length > 0) {
+    const dsmMsg = findLengthDelimitedField(dsmBytes, 2);
+    if (dsmMsg && dsmMsg.length > 0) {
+      const found = findNestedStickerBytesInMessageBytes(dsmMsg, depth + 1);
+      if (found) return found;
+    }
+  }
+
+  return null;
+}
+
+function decodeStickerWithAudioBytes(stickerBytes) {
   if (!stickerBytes || stickerBytes.length === 0) return null;
-
   const stickerMessage = proto.Message.StickerMessage.decode(stickerBytes);
   try {
     Object.defineProperty(stickerMessage, RAW_WIRE_FIELDS_SYMBOL, {
@@ -312,6 +390,42 @@ function extractAudioStickerFromRawMessageBytes(rawBytes) {
 }
 
 /**
+ * Mengekstrak StickerMessage + AudioMessage dari raw bytes `proto.Message` yang
+ * membawa field 134 (`audioStickerMessage`), termasuk jika di dalamnya masih terbungkus
+ * `ephemeralMessage` / `associatedChildMessage` / `deviceSentMessage`, atau bidang
+ * FutureProofMessage tinggi (>= 90) yang membungkus Stiker Suara secara valid.
+ */
+function extractAudioStickerFromRawMessageBytes(rawBytes, { allowHighFieldFallback = false } = {}) {
+  const fp134 = findLengthDelimitedField(rawBytes, 134);
+  if (fp134 && fp134.length > 0) {
+    const innerMsgBytes = findLengthDelimitedField(fp134, 1);
+    if (innerMsgBytes && innerMsgBytes.length > 0) {
+      const stickerBytes = findNestedStickerBytesInMessageBytes(innerMsgBytes, 0);
+      if (stickerBytes && stickerBytes.length > 0) {
+        return decodeStickerWithAudioBytes(stickerBytes);
+      }
+    }
+  }
+
+  if (allowHighFieldFallback) {
+    const candidates = findLengthDelimitedFieldsFrom(rawBytes, 90);
+    for (const item of candidates) {
+      if (item.fieldNum === 134) continue;
+      const innerMsgBytes = findLengthDelimitedField(item.bytes, 1);
+      if (!innerMsgBytes || innerMsgBytes.length === 0) continue;
+      const stickerBytes = findNestedStickerBytesInMessageBytes(innerMsgBytes, 0);
+      if (!stickerBytes || stickerBytes.length === 0) continue;
+      const audioCheck = extractAudioFromStickerBytes(stickerBytes);
+      if (audioCheck && (audioCheck.url || audioCheck.directPath) && audioCheck.mediaKey && audioCheck.mediaKey.length > 0) {
+        return decodeStickerWithAudioBytes(stickerBytes);
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
  * Mengekstrak AudioMessage bila StickerMessage berada langsung di top-level field 26
  * tanpa pembungkus field 134.
  */
@@ -319,6 +433,27 @@ function extractDirectStickerAudioFromRawMessageBytes(rawBytes) {
   const stickerBytes = findLengthDelimitedField(rawBytes, 26);
   if (!stickerBytes || stickerBytes.length === 0) return null;
   return extractAudioFromStickerBytes(stickerBytes);
+}
+
+function hasStandardMessageContent(decoded) {
+  if (!decoded || typeof decoded !== 'object') return false;
+  return Boolean(
+    decoded.conversation ||
+      decoded.extendedTextMessage ||
+      decoded.imageMessage ||
+      decoded.videoMessage ||
+      decoded.audioMessage ||
+      decoded.documentMessage ||
+      decoded.stickerMessage ||
+      decoded.protocolMessage ||
+      decoded.reactionMessage ||
+      decoded.ephemeralMessage ||
+      decoded.viewOnceMessage ||
+      decoded.viewOnceMessageV2 ||
+      decoded.viewOnceMessageV2Extension ||
+      decoded.deviceSentMessage ||
+      decoded.associatedChildMessage
+  );
 }
 
 /**
@@ -390,7 +525,9 @@ function installAudioStickerProtoPatch() {
 
       if (!decoded.stickerMessage) {
         try {
-          const extracted = extractAudioStickerFromRawMessageBytes(rawSlice);
+          const extracted = extractAudioStickerFromRawMessageBytes(rawSlice, {
+            allowHighFieldFallback: !hasStandardMessageContent(decoded)
+          });
           if (extracted && extracted.stickerMessage) {
             decoded.stickerMessage = extracted.stickerMessage;
           }

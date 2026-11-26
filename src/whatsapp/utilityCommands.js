@@ -47,7 +47,7 @@ const COMMAND_ALIAS_GROUPS = {
   menu: ['menu', 'help', 'bantuan', 'cmd', 'commands', 'list'],
   ping: ['ping', 'cek', 'status', 'uptime'],
   sticker: ['sticker', 'stiker', 's', 'stk'],
-  toimg: ['toimg', 'toimage', 'togif', 'img', 'gambar', 'foto'],
+  toimg: ['toimg', 'toimage', 'togif', 'tovid', 'tovideo', 'img', 'gambar', 'foto'],
   wm: ['wm', 'steal', 'watermark', 'take'],
   crop: ['crop', 'potong', 'square', 'kotak'],
   text: ['text', 'teks', 'txt'],
@@ -85,6 +85,10 @@ function unwrapWhatsAppMessage(rawMessage) {
     }
     if (current.deviceSentMessage?.message) {
       current = current.deviceSentMessage.message;
+      continue;
+    }
+    if (current.lottieStickerMessage?.message) {
+      current = current.lottieStickerMessage.message;
       continue;
     }
     if (current.editedMessage?.message?.protocolMessage?.editedMessage) {
@@ -386,7 +390,7 @@ function buildMenuText({ showOwnerCommands = false, isOwner = false } = {}) {
     '',
     '*Media & Stiker:*',
     '- `!sticker` (`stiker`, `s`, `stk`) — ubah foto, GIF, atau video pendek (<= 15 detik) jadi stiker statis/bergerak; video bersuara otomatis mempertahankan audio aslinya (tambah `crop` untuk potong 1:1, `mute` untuk hilangkan suara)',
-    '- `!toimg` (`toimage`, `togif`, `img`, `gambar`, `foto`) — ubah stiker (balas stiker) jadi gambar, atau GIF bila stiker bergerak',
+    '- `!toimg` (`toimage`, `togif`, `tovid`, `tovideo`, `img`, `gambar`, `foto`) — ubah stiker (balas stiker) jadi gambar, GIF (stiker bergerak), atau video bersuara (stiker suara)',
     '- `!wm <paket> | <pembuat>` (`steal`, `watermark`, `take`) — ganti nama paket & pembuat pada stiker yang dibalas',
     '- `!crop` (`potong`, `square`, `kotak`) — potong foto, video, atau GIF menjadi kotak 1:1 tepat di tengah',
     '',
@@ -726,12 +730,25 @@ async function handleUtilityCommands({
 
         const result = await runMediaJob(async () => {
           const webpBuffer = await downloadValidatedMediaBuffer(candidate, downloadMediaBuffer);
-          return await convertStickerToMedia(webpBuffer);
+          const preservedAudio = await resolvePreservedStickerAudio(candidate, {
+            resolveStickerAudio,
+            downloadMediaBuffer
+          });
+          return await convertStickerToMedia(
+            webpBuffer,
+            preservedAudio ? { audioBuffer: preservedAudio.audioBuffer } : {}
+          );
         });
 
         let payload;
         let outputLabel;
-        if (result.kind === 'gif') {
+        if (result.kind === 'video') {
+          payload = {
+            video: result.buffer,
+            mimetype: 'video/mp4'
+          };
+          outputLabel = 'video bersuara';
+        } else if (result.kind === 'gif') {
           payload = {
             video: result.buffer,
             gifPlayback: true,
@@ -751,6 +768,12 @@ async function handleUtilityCommands({
         }
 
         await replyFn(payload);
+        if (result.kind !== 'video' && candidate.hasSoundMarkerField24) {
+          addLog(
+            'warn',
+            `Catatan ${parsed.trigger} (${actorLabel}): stiker bertanda bidang 24 namun data suara tidak ditemukan dari cache maupun pemulihan PDO; dikirim sebagai ${outputLabel}.`
+          );
+        }
         addLog('info', `Perintah ${parsed.trigger} berhasil mengubah stiker ke ${outputLabel} untuk ${actorLabel}.`);
         return true;
       }
@@ -781,9 +804,10 @@ async function handleUtilityCommands({
             : { sticker: wmOutcome.sticker }
         );
         if (!wmOutcome.audioSticker && candidate.hasSoundMarkerField24) {
-          await replyFn({
-            text: '_Catatan: WhatsApp memangkas data suara saat membalas stiker lama yang belum pernah terekam bot. Kirim ulang stiker bersuara tersebut sekali dulu, lalu balas lagi dengan perintah ini agar suaranya tetap terbawa._'
-          });
+          addLog(
+            'warn',
+            `Catatan ${parsed.trigger} (${actorLabel}): stiker bertanda bidang 24 namun data suara tidak ditemukan dari cache maupun pemulihan PDO; dikirim tanpa trek audio.`
+          );
         }
         addLog(
           'info',
@@ -947,9 +971,10 @@ async function handleUtilityCommands({
               : { sticker: stickerOutcome.sticker }
           );
           if (!stickerOutcome.audioSticker && candidate.hasSoundMarkerField24) {
-            await replyFn({
-              text: `_Catatan: WhatsApp memangkas data suara saat membalas stiker lama yang belum pernah terekam bot. Kirim ulang stiker bersuara tersebut sekali dulu, lalu balas lagi dengan \`${cmdLabel}\` agar suaranya tetap terbawa._`
-            });
+            addLog(
+              'warn',
+              `Catatan ${parsed.trigger} (${actorLabel}): stiker bertanda bidang 24 namun data suara tidak ditemukan dari cache maupun pemulihan PDO; dikirim tanpa trek audio.`
+            );
           }
           addLog(
             'info',
@@ -1093,7 +1118,7 @@ async function handleUtilityCommands({
     const userMsg =
       err instanceof MediaValidationError || err.userMessage
         ? err.userMessage
-        : `Maaf, perintah ${parsed.trigger} gagal diproses karena kendala teknis. Coba lagi sebentar ya.`;
+        : `Maaf, perintah ${parsed.trigger} belum berhasil diproses. Coba lagi sebentar ya.`;
 
     try {
       await replyFn({ text: userMsg });
