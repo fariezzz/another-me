@@ -41,11 +41,15 @@ const {
 } = require('../utils/emojiRenderer');
 
 const MAX_MEDIA_BYTES = parseInt(process.env.MAX_MEDIA_BYTES, 10) || 5 * 1024 * 1024; // 5 Megabyte
+const MAX_TOSOUND_VIDEO_BYTES =
+  parseInt(process.env.MAX_TOSOUND_VIDEO_BYTES, 10) || 20 * 1024 * 1024; // 20 Megabyte khusus ekstraksi audio video
+const MAX_OUTPUT_AUDIO_BYTES = 15 * 1024 * 1024; // 15 Megabyte batas aman pengiriman audio WhatsApp
 const MAX_ANIMATED_STICKER_BYTES = 500 * 1024; // 500 Kilobyte agar pasti diterima & diputar WhatsApp
 const MAX_STICKER_AUDIO_BYTES = 900 * 1024; // 900 Kilobyte (aman di bawah batas ~950 KB stiker suara WhatsApp)
 const MAX_VIDEO_INPUT_SECONDS = 15;
 const MAX_CAP_VIDEO_SECONDS = 45;
 const MAX_CROP_VIDEO_SECONDS = 60;
+const MAX_TOSOUND_VIDEO_SECONDS = 180;
 const MAX_CAP_CLEAN_PHOTO_DIM = 1600;
 const MAX_CAP_CLEAN_VIDEO_DIM = 1080;
 const DEFAULT_VIDEO_STICKER_SECONDS = clampNumber(
@@ -402,10 +406,10 @@ async function probeVideoAudioInfo(inputPath, ffmpegPath = FFMPEG_PATH) {
       maxBuffer: 1024 * 1024,
       windowsHide: true
     });
-    return { hasAudio: false, durationSeconds: 0 };
+    return { hasAudio: false, durationSeconds: 0, ffmpegMissing: false };
   } catch (err) {
     if (err && err.code === 'ENOENT') {
-      return { hasAudio: false, durationSeconds: 0 };
+      return { hasAudio: false, durationSeconds: 0, ffmpegMissing: true };
     }
     const stderr = String(err?.stderr || '');
     const hasAudio = /Stream\s+#\d+:\d+[^:\n]*:\s*Audio:/i.test(stderr);
@@ -417,7 +421,7 @@ async function probeVideoAudioInfo(inputPath, ffmpegPath = FFMPEG_PATH) {
         (Number(match[2]) || 0) * 60 +
         (Number(match[3]) || 0);
     }
-    return { hasAudio, durationSeconds };
+    return { hasAudio, durationSeconds, ffmpegMissing: false };
   }
 }
 
@@ -960,6 +964,351 @@ async function convertStickerToMedia(webpBuffer, options = {}) {
     width: pngRes.width,
     height: pngRes.height
   };
+}
+
+/**
+ * Memeriksa header magic bytes berkas audio umum (OGG/Opus, M4A/MP4, MP3, AAC ADTS, WAV, FLAC, AMR, WebM)
+ * agar berkas bukan audio yang disamarkan langsung ditolak sebelum masuk FFmpeg.
+ */
+function detectAudioMediaKind(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 12) return null;
+  const ascii4 = buffer.subarray(0, 4).toString('ascii');
+  if (ascii4 === 'OggS') return 'ogg';
+  if (buffer.subarray(4, 8).toString('ascii') === 'ftyp') return 'm4a';
+  if (ascii4 === 'RIFF' && buffer.subarray(8, 12).toString('ascii') === 'WAVE') return 'wav';
+  if (ascii4 === 'fLaC') return 'flac';
+  if (buffer.subarray(0, 5).toString('ascii') === '#!AMR') return 'amr';
+  if (buffer.subarray(0, 3).toString('ascii') === 'ID3') return 'mp3';
+  if (buffer[0] === 0xff && (buffer[1] & 0xf6) === 0xf0) return 'aac';
+  if (buffer[0] === 0xff && (buffer[1] & 0xe0) === 0xe0 && (buffer[1] & 0x06) !== 0) return 'mp3';
+  if (
+    buffer[0] === 0x1a &&
+    buffer[1] === 0x45 &&
+    buffer[2] === 0xdf &&
+    buffer[3] === 0xa3
+  ) {
+    return 'webm';
+  }
+  return null;
+}
+
+/**
+ * Menghasilkan 64 sampel waveform (Uint8Array rentang 0-100) untuk pesan suara WhatsApp (ptt: true)
+ * langsung melalui dekode PCM mono 8 kHz FFmpeg tanpa dependensi tambahan.
+ */
+async function generateAudioWaveformFromFile(inputPath, ffmpegPath = FFMPEG_PATH) {
+  try {
+    const { stdout } = await execFileAsync(
+      ffmpegPath,
+      ['-i', inputPath, '-vn', '-ac', '1', '-ar', '8000', '-f', 's16le', 'pipe:1'],
+      {
+        timeout: 15000,
+        maxBuffer: 8 * 1024 * 1024,
+        encoding: 'buffer',
+        windowsHide: true
+      }
+    );
+    if (!Buffer.isBuffer(stdout) || stdout.length < 128) return undefined;
+    const totalSamples = Math.floor(stdout.length / 2);
+    const barCount = 64;
+    const blockSize = Math.max(1, Math.floor(totalSamples / barCount));
+    const stride = Math.max(1, Math.floor(blockSize / 256));
+    const rawPeaks = new Array(barCount);
+    let maxVal = 0;
+
+    for (let i = 0; i < barCount; i++) {
+      const start = i * blockSize;
+      const end = Math.min(totalSamples, start + blockSize);
+      let sum = 0;
+      let count = 0;
+      for (let s = start; s < end; s += stride) {
+        sum += Math.abs(stdout.readInt16LE(s * 2));
+        count += 1;
+      }
+      const avg = count > 0 ? sum / count : 0;
+      rawPeaks[i] = avg;
+      if (avg > maxVal) maxVal = avg;
+    }
+
+    const waveform = new Uint8Array(barCount);
+    if (maxVal > 0) {
+      for (let i = 0; i < barCount; i++) {
+        waveform[i] = Math.min(100, Math.max(0, Math.round((rawPeaks[i] / maxVal) * 100)));
+      }
+    }
+    return waveform;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Helper internal penyandi berkas video/audio menjadi audio WhatsApp siap putar lintas perangkat:
+ * - Mode suara biasa (asVoiceNote: false): M4A AAC 128 kbps (`audio/mp4`, kompatibel Android, iOS, & Web)
+ * - Mode pesan suara (asVoiceNote: true): OGG Opus mono 48 kbps (`audio/ogg; codecs=opus`) + waveform 64 batang
+ */
+async function transcodeFileToWhatsAppSound(
+  inputPath,
+  tmpDir,
+  { asVoiceNote = false, maxDurationSec = MAX_TOSOUND_VIDEO_SECONDS, fallbackSeconds = 0, ffmpegPath = FFMPEG_PATH } = {}
+) {
+  const safeMaxDuration = clampNumber(Number(maxDurationSec), MAX_TOSOUND_VIDEO_SECONDS, 1, 300);
+  const outputPath = path.join(tmpDir, asVoiceNote ? 'output.ogg' : 'output.m4a');
+  const args = asVoiceNote
+    ? [
+        '-y',
+        '-i',
+        inputPath,
+        '-t',
+        String(safeMaxDuration),
+        '-vn',
+        '-map',
+        '0:a:0',
+        '-c:a',
+        'libopus',
+        '-b:a',
+        '48k',
+        '-ac',
+        '1',
+        '-ar',
+        '48000',
+        '-application',
+        'audio',
+        '-avoid_negative_ts',
+        'make_zero',
+        outputPath
+      ]
+    : [
+        '-y',
+        '-i',
+        inputPath,
+        '-t',
+        String(safeMaxDuration),
+        '-vn',
+        '-map',
+        '0:a:0',
+        '-c:a',
+        'aac',
+        '-b:a',
+        '128k',
+        '-movflags',
+        '+faststart',
+        '-avoid_negative_ts',
+        'make_zero',
+        outputPath
+      ];
+
+  await execFileAsync(ffmpegPath, args, {
+    timeout: 45000,
+    maxBuffer: 2 * 1024 * 1024,
+    windowsHide: true
+  });
+
+  if (!fs.existsSync(outputPath)) {
+    throw new Error('FFmpeg selesai tetapi berkas audio keluaran tidak ditemukan.');
+  }
+  const outBuffer = fs.readFileSync(outputPath);
+  if (outBuffer.length === 0) {
+    throw new MediaValidationError(
+      'EMPTY_AUDIO',
+      'Maaf, suara pada media ini tidak bisa diambil. Coba kirim media lain ya.',
+      'Hasil ekstraksi audio FFmpeg berukuran 0 byte.'
+    );
+  }
+  if (outBuffer.length > MAX_OUTPUT_AUDIO_BYTES) {
+    throw new MediaValidationError(
+      'AUDIO_TOO_LARGE',
+      'Maaf, hasil audionya terlalu besar untuk dikirim ke WhatsApp. Coba potong durasinya lebih singkat ya.'
+    );
+  }
+
+  const outInfo = await probeVideoAudioInfo(outputPath, ffmpegPath);
+  const seconds = Math.max(1, Math.round(outInfo.durationSeconds || fallbackSeconds || 1));
+  const waveform = asVoiceNote ? await generateAudioWaveformFromFile(outputPath, ffmpegPath) : undefined;
+
+  return {
+    kind: asVoiceNote ? 'voice_note' : 'audio',
+    buffer: outBuffer,
+    mimeType: asVoiceNote ? 'audio/ogg; codecs=opus' : 'audio/mp4',
+    ptt: Boolean(asVoiceNote),
+    seconds,
+    waveform
+  };
+}
+
+/**
+ * Mengekstrak trek suara dari video (.mp4/.webm/.mov/.avi) menjadi audio WhatsApp
+ * untuk perintah !tosound / .tosound (dan mode pesan suara !tosound vn / !tovn).
+ */
+async function extractSoundFromVideo(
+  videoBuffer,
+  {
+    asVoiceNote = false,
+    maxDurationSec = MAX_TOSOUND_VIDEO_SECONDS,
+    maxBytes = MAX_TOSOUND_VIDEO_BYTES,
+    ffmpegPath = FFMPEG_PATH
+  } = {}
+) {
+  if (!Buffer.isBuffer(videoBuffer) || videoBuffer.length === 0) {
+    throw new MediaValidationError('EMPTY_BUFFER', 'Maaf, media gagal diunduh atau berkasnya kosong.');
+  }
+  if (videoBuffer.length > maxBytes) {
+    const maxMb = Math.round((maxBytes / (1024 * 1024)) * 10) / 10;
+    throw new MediaValidationError(
+      'TOO_LARGE',
+      `Maaf, ukuran videonya melebihi batas maksimal ${maxMb} Megabyte. Coba kirim video yang lebih kecil ya.`
+    );
+  }
+
+  const detectedKind = detectAnimatedMediaKind(videoBuffer);
+  if (detectedKind === 'gif') {
+    throw new MediaValidationError(
+      'NO_AUDIO',
+      'Maaf, gambar bergerak tidak memiliki suara. Kirim atau balas video yang bersuara atau stiker bersuara ya.'
+    );
+  }
+  if (!detectedKind) {
+    throw new MediaValidationError(
+      'NOT_MEDIA',
+      'Maaf, format berkas video ini tidak dikenali atau berkasnya rusak.'
+    );
+  }
+
+  const safeMaxDuration = clampNumber(Number(maxDurationSec), MAX_TOSOUND_VIDEO_SECONDS, 1, 300);
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'another-me-tosound-'));
+  const inputPath = path.join(tmpDir, `input.${detectedKind}`);
+
+  try {
+    fs.writeFileSync(inputPath, videoBuffer);
+    const streamInfo = await probeVideoAudioInfo(inputPath, ffmpegPath);
+    if (streamInfo.ffmpegMissing) {
+      throw new MediaValidationError(
+        'FFMPEG_MISSING',
+        'Maaf, fitur ubah video jadi suara sedang belum bisa dipakai saat ini.',
+        'FFmpeg tidak terpasang di sistem untuk mengekstrak audio dari video.'
+      );
+    }
+    if (!streamInfo.hasAudio) {
+      throw new MediaValidationError(
+        'NO_AUDIO',
+        'Maaf, video ini tidak memiliki suara. Kirim atau balas video yang bersuara ya.'
+      );
+    }
+    if (streamInfo.durationSeconds > safeMaxDuration + 1) {
+      throw new MediaValidationError(
+        'VIDEO_TOO_LONG',
+        `Maaf, durasi videonya terlalu panjang (maksimal ${safeMaxDuration} detik) untuk diambil suaranya. Potong dulu videonya lebih singkat ya.`
+      );
+    }
+
+    return await transcodeFileToWhatsAppSound(inputPath, tmpDir, {
+      asVoiceNote,
+      maxDurationSec: safeMaxDuration,
+      fallbackSeconds: streamInfo.durationSeconds,
+      ffmpegPath
+    });
+  } catch (err) {
+    if (err && err.code === 'ENOENT') {
+      throw new MediaValidationError(
+        'FFMPEG_MISSING',
+        'Maaf, fitur ubah video jadi suara sedang belum bisa dipakai saat ini.',
+        'FFmpeg tidak terpasang di sistem untuk mengekstrak audio dari video.'
+      );
+    }
+    if (err instanceof MediaValidationError) throw err;
+    throw new Error(`FFmpeg gagal mengekstrak suara dari video: ${err.message}`);
+  } finally {
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    } catch {}
+  }
+}
+
+/**
+ * Mengonversi buffer audio mentah (misalnya trek OGG/Opus dari Stiker Suara atau pesan audio WhatsApp)
+ * menjadi audio siap putar WhatsApp (M4A audio/mp4 untuk !tosound, atau OGG/Opus + waveform untuk !tosound vn).
+ */
+async function convertSoundBufferToWhatsAppAudio(
+  audioBuffer,
+  {
+    asVoiceNote = false,
+    maxDurationSec = MAX_TOSOUND_VIDEO_SECONDS,
+    maxBytes = MAX_TOSOUND_VIDEO_BYTES,
+    audioSecondsHint = 0,
+    ffmpegPath = FFMPEG_PATH
+  } = {}
+) {
+  if (!Buffer.isBuffer(audioBuffer) || audioBuffer.length === 0) {
+    throw new MediaValidationError(
+      'EMPTY_AUDIO',
+      'Maaf, suara pada media ini belum bisa diproses. Coba lagi ya.',
+      'Buffer audio kosong (EMPTY_AUDIO).'
+    );
+  }
+  if (audioBuffer.length > maxBytes) {
+    const maxMb = Math.round((maxBytes / (1024 * 1024)) * 10) / 10;
+    throw new MediaValidationError(
+      'TOO_LARGE',
+      `Maaf, ukuran audionya melebihi batas maksimal ${maxMb} Megabyte. Coba kirim berkas yang lebih kecil ya.`
+    );
+  }
+
+  const detectedKind = detectAudioMediaKind(audioBuffer);
+  if (!detectedKind) {
+    throw new MediaValidationError(
+      'NOT_AUDIO',
+      'Maaf, format suara pada media ini tidak dikenali atau berkasnya rusak.'
+    );
+  }
+
+  const safeMaxDuration = clampNumber(Number(maxDurationSec), MAX_TOSOUND_VIDEO_SECONDS, 1, 300);
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'another-me-sndbuf-'));
+  const inputPath = path.join(tmpDir, `input.${detectedKind}`);
+
+  try {
+    fs.writeFileSync(inputPath, audioBuffer);
+    return await transcodeFileToWhatsAppSound(inputPath, tmpDir, {
+      asVoiceNote,
+      maxDurationSec: safeMaxDuration,
+      fallbackSeconds: audioSecondsHint,
+      ffmpegPath
+    });
+  } catch (err) {
+    if (err && err.code === 'ENOENT') {
+      const hintSec = Math.max(1, Math.round(Number(audioSecondsHint) || 1));
+      if (detectedKind === 'ogg') {
+        return {
+          kind: asVoiceNote ? 'voice_note' : 'audio',
+          buffer: audioBuffer,
+          mimeType: 'audio/ogg; codecs=opus',
+          ptt: Boolean(asVoiceNote),
+          seconds: hintSec,
+          waveform: undefined
+        };
+      }
+      if (detectedKind === 'm4a' && !asVoiceNote) {
+        return {
+          kind: 'audio',
+          buffer: audioBuffer,
+          mimeType: 'audio/mp4',
+          ptt: false,
+          seconds: hintSec,
+          waveform: undefined
+        };
+      }
+      throw new MediaValidationError(
+        'FFMPEG_MISSING',
+        'Maaf, fitur olah suara sedang belum bisa dipakai saat ini.',
+        'FFmpeg tidak terpasang di sistem untuk konversi buffer audio.'
+      );
+    }
+    if (err instanceof MediaValidationError) throw err;
+    throw new Error(`FFmpeg gagal mengonversi suara: ${err.message}`);
+  } finally {
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    } catch {}
+  }
 }
 
 /**
@@ -2647,11 +2996,14 @@ async function cropVideoOrGifToSquare(
 
 module.exports = {
   MAX_MEDIA_BYTES,
+  MAX_TOSOUND_VIDEO_BYTES,
+  MAX_OUTPUT_AUDIO_BYTES,
   MAX_ANIMATED_STICKER_BYTES,
   MAX_STICKER_AUDIO_BYTES,
   MAX_VIDEO_INPUT_SECONDS,
   MAX_CAP_VIDEO_SECONDS,
   MAX_CROP_VIDEO_SECONDS,
+  MAX_TOSOUND_VIDEO_SECONDS,
   DEFAULT_VIDEO_STICKER_SECONDS,
   LIMIT_INPUT_PIXELS,
   DEFAULT_PACK_NAME,
@@ -2676,7 +3028,9 @@ module.exports = {
   layoutImpactBlock,
   subsampleFrames,
   detectAnimatedMediaKind,
+  detectAudioMediaKind,
   probeVideoAudioInfo,
+  generateAudioWaveformFromFile,
   validateImageBuffer,
   convertImageToSticker,
   convertVideoOrGifToSticker,
@@ -2684,6 +3038,8 @@ module.exports = {
   convertAnimatedStickerToGif,
   convertSoundStickerToVideo,
   convertStickerToMedia,
+  extractSoundFromVideo,
+  convertSoundBufferToWhatsAppAudio,
   rewriteStickerExif,
   renderTextBlurImage,
   renderCapMeme,

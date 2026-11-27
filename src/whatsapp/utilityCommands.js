@@ -4,7 +4,7 @@
  * maupun lawan bicara di chat pribadi & grup (dilindungi CommandAntiSpamGuard).
  * Seluruh perintah mendukung awalan '!' maupun '.' beserta alias cadangan:
  * - Bantuan & sistem: !menu, !ping
- * - Media & stiker:   !sticker, !toimg, !wm, !crop
+ * - Media & stiker:   !sticker, !toimg, !tosound, !wm, !crop
  * - Meme kustom:      !text, !stext, !cap
  * - Utilitas harian:  !cuaca, !jam, !pilih
  *
@@ -15,9 +15,11 @@ const { normalizeMessageContent } = require('@whiskeysockets/baileys');
 const { getStickerAudioMessage, getRawWireFieldNumbers } = require('./audioStickerCodec');
 const {
   MAX_MEDIA_BYTES,
+  MAX_TOSOUND_VIDEO_BYTES,
   MAX_VIDEO_INPUT_SECONDS,
   MAX_CAP_VIDEO_SECONDS,
   MAX_CROP_VIDEO_SECONDS,
+  MAX_TOSOUND_VIDEO_SECONDS,
   DEFAULT_PACK_NAME,
   DEFAULT_PACK_AUTHOR,
   MediaValidationError,
@@ -25,6 +27,8 @@ const {
   convertImageToSticker,
   convertVideoOrGifToSticker,
   convertStickerToMedia,
+  extractSoundFromVideo,
+  convertSoundBufferToWhatsAppAudio,
   rewriteStickerExif,
   renderTextBlurImage,
   renderCapMeme,
@@ -48,6 +52,7 @@ const COMMAND_ALIAS_GROUPS = {
   ping: ['ping', 'cek', 'status', 'uptime'],
   sticker: ['sticker', 'stiker', 's', 'stk'],
   toimg: ['toimg', 'toimage', 'togif', 'tovid', 'tovideo', 'img', 'gambar', 'foto'],
+  tosound: ['tosound', 'toaudio', 'tomp3', 'tovn', 'toptt', 'sound', 'audio', 'suara'],
   wm: ['wm', 'steal', 'watermark', 'take'],
   crop: ['crop', 'potong', 'square', 'kotak'],
   text: ['text', 'teks', 'txt'],
@@ -66,7 +71,7 @@ for (const [canonical, aliases] of Object.entries(COMMAND_ALIAS_GROUPS)) {
   }
 }
 
-const MEDIA_COMMANDS = new Set(['sticker', 'toimg', 'wm', 'crop', 'text', 'stext', 'cap', 'caphd']);
+const MEDIA_COMMANDS = new Set(['sticker', 'toimg', 'tosound', 'wm', 'crop', 'text', 'stext', 'cap', 'caphd']);
 
 /**
  * Membuka seluruh lapisan pembungkus pesan WhatsApp Baileys v7 secara rekursif,
@@ -213,7 +218,12 @@ function isViewOnceRawMessage(rawContent) {
   ) {
     return true;
   }
-  return Boolean(inner?.imageMessage?.viewOnce || inner?.videoMessage?.viewOnce);
+  return Boolean(
+    inner?.imageMessage?.viewOnce ||
+      inner?.videoMessage?.viewOnce ||
+      inner?.ptvMessage?.viewOnce ||
+      inner?.audioMessage?.viewOnce
+  );
 }
 
 /**
@@ -260,7 +270,24 @@ function inspectMediaInContent(content) {
       caption: String(content.videoMessage.caption || '').trim()
     };
   }
+  if (content.ptvMessage) {
+    if (content.ptvMessage.viewOnce) {
+      return { kind: 'view_once', mimeType: content.ptvMessage.mimetype || 'video/mp4', fileLength: 0 };
+    }
+    return {
+      kind: 'video',
+      mimeType: content.ptvMessage.mimetype || 'video/mp4',
+      fileLength: parseFileLength(content.ptvMessage.fileLength),
+      seconds: parseFileLength(content.ptvMessage.seconds),
+      gifPlayback: false,
+      isPtv: true,
+      caption: String(content.ptvMessage.caption || '').trim()
+    };
+  }
   if (content.audioMessage) {
+    if (content.audioMessage.viewOnce) {
+      return { kind: 'view_once', mimeType: content.audioMessage.mimetype || 'audio/ogg', fileLength: 0 };
+    }
     return {
       kind: 'audio',
       mimeType: content.audioMessage.mimetype || 'audio/ogg',
@@ -282,7 +309,7 @@ function inspectMediaInContent(content) {
         caption
       };
     }
-    if (/^video\/(mp4|webm|quicktime|x-msvideo)$/.test(mime)) {
+    if (/^video\/(mp4|webm|quicktime|x-msvideo|x-matroska|3gpp)$/.test(mime)) {
       return {
         kind: 'video',
         mimeType: mime,
@@ -391,6 +418,7 @@ function buildMenuText({ showOwnerCommands = false, isOwner = false } = {}) {
     '*Media & Stiker:*',
     '- `!sticker` (`stiker`, `s`, `stk`) — ubah foto, GIF, atau video pendek (<= 15 detik) jadi stiker statis/bergerak; video bersuara otomatis mempertahankan audio aslinya (tambah `crop` untuk potong 1:1, `mute` untuk hilangkan suara)',
     '- `!toimg` (`toimage`, `togif`, `tovid`, `tovideo`, `img`, `gambar`, `foto`) — ubah stiker (balas stiker) jadi gambar, GIF (stiker bergerak), atau video bersuara (stiker suara)',
+    '- `!tosound` (`toaudio`, `tomp3`, `tovn`, `toptt`, `sound`, `audio`, `suara`) — ubah video bersuara (<= 3 menit) atau stiker bersuara jadi audio (tambah `vn` atau pakai `!tovn` untuk pesan suara)',
     '- `!wm <paket> | <pembuat>` (`steal`, `watermark`, `take`) — ganti nama paket & pembuat pada stiker yang dibalas',
     '- `!crop` (`potong`, `square`, `kotak`) — potong foto, video, atau GIF menjadi kotak 1:1 tepat di tengah',
     '',
@@ -421,22 +449,26 @@ function buildMenuText({ showOwnerCommands = false, isOwner = false } = {}) {
     }
   }
 
-  sections.push('', '_Catatan: ukuran gambar maksimal 5 Megabyte._');
+  sections.push('', '_Catatan: ukuran media maksimal 5 Megabyte (video `!tosound` maksimal 20 Megabyte)._');
   return sections.join('\n');
 }
 
 /**
  * Mengunduh media memakai downloadMediaBuffer (yang membungkus downloadMediaMessage bawaan)
- * dengan pemeriksaan ukuran 5 Megabyte sebelum dan sesudah unduh.
+ * dengan pemeriksaan batas ukuran sebelum dan sesudah unduh.
  */
-async function downloadValidatedMediaBuffer(candidate, downloadMediaBuffer) {
-  const maxMb = Math.round((MAX_MEDIA_BYTES / (1024 * 1024)) * 10) / 10;
+async function downloadValidatedMediaBuffer(
+  candidate,
+  downloadMediaBuffer,
+  { maxBytes = MAX_MEDIA_BYTES, mediaLabel = 'gambarnya' } = {}
+) {
+  const maxMb = Math.round((maxBytes / (1024 * 1024)) * 10) / 10;
 
-  // Lapis 1: Tolak sebelum mengunduh jika metadata fileLength sudah melebihi 5 Megabyte
-  if (candidate.fileLength > MAX_MEDIA_BYTES) {
+  // Lapis 1: Tolak sebelum mengunduh jika metadata fileLength sudah melebihi batas
+  if (candidate.fileLength > maxBytes) {
     throw new MediaValidationError(
       'TOO_LARGE',
-      `Maaf, ukuran gambarnya terlalu besar (maksimal ${maxMb} Megabyte). Coba kirim gambar yang lebih kecil ya.`
+      `Maaf, ukuran ${mediaLabel} terlalu besar (maksimal ${maxMb} Megabyte). Coba kirim berkas yang lebih kecil ya.`
     );
   }
 
@@ -446,7 +478,7 @@ async function downloadValidatedMediaBuffer(candidate, downloadMediaBuffer) {
   } catch (err) {
     const dlErr = new Error(`Gagal mengunduh media WhatsApp: ${err.message}`);
     dlErr.userMessage =
-      'Maaf, media gagal diunduh dari WhatsApp (kemungkinan terlalu lama atau sudah kedaluwarsa). Coba kirim ulang fotonya ya.';
+      'Maaf, media gagal diunduh dari WhatsApp (kemungkinan terlalu lama atau sudah kedaluwarsa). Coba kirim ulang medianya ya.';
     throw dlErr;
   }
 
@@ -458,10 +490,10 @@ async function downloadValidatedMediaBuffer(candidate, downloadMediaBuffer) {
   }
 
   // Lapis 2: Validasi ulang ukuran aktual buffer setelah terunduh
-  if (buffer.length > MAX_MEDIA_BYTES) {
+  if (buffer.length > maxBytes) {
     throw new MediaValidationError(
       'TOO_LARGE',
-      `Maaf, ukuran gambarnya melebihi batas maksimal ${maxMb} Megabyte. Coba kirim gambar yang lebih kecil ya.`
+      `Maaf, ukuran ${mediaLabel} melebihi batas maksimal ${maxMb} Megabyte. Coba kirim berkas yang lebih kecil ya.`
     );
   }
 
@@ -470,7 +502,7 @@ async function downloadValidatedMediaBuffer(candidate, downloadMediaBuffer) {
 
 /**
  * Mencoba mengambil trek audio OGG/Opus dari Stiker Suara yang dibalas agar
- * perintah `!cap`, `!caphd`, dan `!wm` tidak menghilangkan suara asli stiker.
+ * perintah `!toimg`, `!tosound`, `!cap`, `!caphd`, dan `!wm` dapat memanfaatkan suara asli stiker.
  */
 async function resolvePreservedStickerAudio(candidate, { resolveStickerAudio, downloadMediaBuffer } = {}) {
   if (!candidate || candidate.kind !== 'sticker') return null;
@@ -775,6 +807,146 @@ async function handleUtilityCommands({
           );
         }
         addLog('info', `Perintah ${parsed.trigger} berhasil mengubah stiker ke ${outputLabel} untuk ${actorLabel}.`);
+        return true;
+      }
+
+      case 'tosound': {
+        const triggerName = parsed.trigger.slice(1).toLowerCase();
+        const asVoiceNote =
+          triggerName === 'tovn' ||
+          triggerName === 'toptt' ||
+          /\b(vn|ptt|voicenote|voice)\b/i.test(parsed.args);
+        const outputLabel = asVoiceNote ? 'pesan suara' : 'audio';
+
+        const candidate = extractMediaCandidate(msg, normalizedMessage, mediaLookupOpts);
+        if (!candidate) {
+          await replyFn({
+            text: 'Kirim video dengan caption `!tosound` (atau `.tosound`), atau balas video / stiker bersuara dengan `!tosound` ya. Tambahkan `vn` kalau mau dikirim sebagai pesan suara (contoh: `!tosound vn`).'
+          });
+          return true;
+        }
+        if (candidate.kind === 'view_once') {
+          await replyFn({
+            text: 'Maaf, media sekali lihat (View Once) tidak bisa diubah menjadi suara untuk menghormati privasi pengirimnya.'
+          });
+          return true;
+        }
+
+        const sendAudioResult = async (soundResult, sourceLabel) => {
+          const payload = {
+            audio: soundResult.buffer,
+            mimetype: soundResult.mimeType,
+            ptt: Boolean(soundResult.ptt),
+            seconds: soundResult.seconds
+          };
+          if (soundResult.ptt && soundResult.waveform) {
+            payload.waveform = soundResult.waveform;
+          }
+          await replyFn(payload);
+          addLog(
+            'info',
+            `Perintah ${parsed.trigger} berhasil mengubah ${sourceLabel} menjadi ${outputLabel} (${soundResult.seconds} detik) untuk ${actorLabel}.`
+          );
+        };
+
+        if (candidate.kind === 'sticker') {
+          const soundResult = await runMediaJob(async () => {
+            const preservedAudio = await resolvePreservedStickerAudio(candidate, {
+              resolveStickerAudio,
+              downloadMediaBuffer
+            });
+            if (!preservedAudio) return null;
+            return await convertSoundBufferToWhatsAppAudio(preservedAudio.audioBuffer, {
+              asVoiceNote,
+              maxDurationSec: MAX_TOSOUND_VIDEO_SECONDS,
+              maxBytes: MAX_TOSOUND_VIDEO_BYTES,
+              audioSecondsHint: preservedAudio.audioSeconds
+            });
+          });
+
+          if (!soundResult) {
+            if (candidate.hasSoundMarkerField24) {
+              addLog(
+                'warn',
+                `Catatan ${parsed.trigger} (${actorLabel}): stiker bertanda bidang 24 namun data suara tidak ditemukan dari cache maupun pemulihan PDO.`
+              );
+            }
+            await replyFn({
+              text: 'Maaf, stiker ini tidak memiliki suara atau suaranya tidak ditemukan. Balas stiker bersuara atau video bersuara dengan `!tosound` ya.'
+            });
+            return true;
+          }
+
+          await sendAudioResult(soundResult, 'stiker bersuara');
+          return true;
+        }
+
+        if (candidate.kind === 'video') {
+          if (candidate.gifPlayback) {
+            await replyFn({
+              text: 'Maaf, gambar bergerak tidak memiliki suara. Kirim atau balas video yang bersuara atau stiker bersuara ya.'
+            });
+            return true;
+          }
+          if (candidate.seconds > MAX_TOSOUND_VIDEO_SECONDS) {
+            await replyFn({
+              text: `Maaf, durasi videonya terlalu panjang (${candidate.seconds} detik, maksimal ${MAX_TOSOUND_VIDEO_SECONDS} detik) untuk diambil suaranya. Potong dulu videonya lebih singkat ya.`
+            });
+            return true;
+          }
+
+          const soundResult = await runMediaJob(async () => {
+            const mediaBuffer = await downloadValidatedMediaBuffer(candidate, downloadMediaBuffer, {
+              maxBytes: MAX_TOSOUND_VIDEO_BYTES,
+              mediaLabel: 'videonya'
+            });
+            return await extractSoundFromVideo(mediaBuffer, {
+              asVoiceNote,
+              maxDurationSec: MAX_TOSOUND_VIDEO_SECONDS,
+              maxBytes: MAX_TOSOUND_VIDEO_BYTES
+            });
+          });
+
+          await sendAudioResult(soundResult, 'video');
+          return true;
+        }
+
+        if (candidate.kind === 'audio') {
+          if (Boolean(candidate.ptt) === Boolean(asVoiceNote)) {
+            await replyFn({
+              text: asVoiceNote
+                ? 'Itu sudah berbentuk pesan suara ya. Kalau mau ubah jadi audio biasa, balas pesannya dengan `!tosound`.'
+                : 'Itu sudah berbentuk audio ya. Kalau mau ubah jadi pesan suara, balas audionya dengan `!tosound vn`.'
+            });
+            return true;
+          }
+          if (candidate.seconds > MAX_TOSOUND_VIDEO_SECONDS) {
+            await replyFn({
+              text: `Maaf, durasi audionya terlalu panjang (${candidate.seconds} detik, maksimal ${MAX_TOSOUND_VIDEO_SECONDS} detik). Coba kirim audio yang lebih singkat ya.`
+            });
+            return true;
+          }
+
+          const soundResult = await runMediaJob(async () => {
+            const audioBuf = await downloadValidatedMediaBuffer(candidate, downloadMediaBuffer, {
+              maxBytes: MAX_TOSOUND_VIDEO_BYTES,
+              mediaLabel: 'audionya'
+            });
+            return await convertSoundBufferToWhatsAppAudio(audioBuf, {
+              asVoiceNote,
+              maxDurationSec: MAX_TOSOUND_VIDEO_SECONDS,
+              maxBytes: MAX_TOSOUND_VIDEO_BYTES,
+              audioSecondsHint: candidate.seconds
+            });
+          });
+
+          await sendAudioResult(soundResult, candidate.ptt ? 'pesan suara' : 'audio');
+          return true;
+        }
+
+        await replyFn({
+          text: 'Maaf, perintah `!tosound` hanya bisa dipakai untuk video bersuara atau stiker bersuara. Kirim atau balas video / stiker bersuara dengan `!tosound` ya.'
+        });
         return true;
       }
 

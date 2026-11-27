@@ -13,9 +13,11 @@ const {
 } = require('../src/utils/emojiRenderer');
 const {
   MAX_MEDIA_BYTES,
+  MAX_TOSOUND_VIDEO_BYTES,
   MAX_ANIMATED_STICKER_BYTES,
   MAX_STICKER_AUDIO_BYTES,
   MAX_CAP_VIDEO_SECONDS,
+  MAX_TOSOUND_VIDEO_SECONDS,
   MediaValidationError,
   resolveCapBlurMode,
   resolveCapTextBlurSigma,
@@ -23,12 +25,15 @@ const {
   resolveCapFontScale,
   computeCapDegradeParams,
   subsampleFrames,
+  detectAudioMediaKind,
   probeVideoAudioInfo,
   validateImageBuffer,
   convertImageToSticker,
   convertVideoOrGifToSticker,
   convertStickerToPng,
   convertSoundStickerToVideo,
+  extractSoundFromVideo,
+  convertSoundBufferToWhatsAppAudio,
   rewriteStickerExif,
   renderTextBlurImage,
   renderCapMeme,
@@ -54,6 +59,7 @@ const {
   parseWatermarkArgs,
   parseFileLength,
   extractMediaCandidate,
+  buildMenuText,
   handleUtilityCommands
 } = require('../src/whatsapp/utilityCommands');
 const BaileysService = require('../src/whatsapp/baileysService');
@@ -3013,6 +3019,467 @@ test('Sound Sticker nested Protobuf decode and on-demand PDO recovery for other 
     );
 
     service.shutdown();
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('!tosound / .tosound extracts audio & voice notes from videos, video notes, and Sound Stickers with strict guards', async () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const { execFile } = require('child_process');
+  const { promisify } = require('util');
+  const execFileAsync = promisify(execFile);
+  const { RAW_WIRE_FIELDS_SYMBOL } = require('../src/whatsapp/audioStickerCodec');
+
+  // 1. Verifikasi parsing seluruh alias !tosound / .tosound dan daftar menu
+  for (const raw of ['!tosound', '.tosound', '!toaudio', '.tomp3', '!tovn', '.toptt', '!sound', '.audio', '!suara']) {
+    const parsed = parseUtilityCommand(raw);
+    assert.equal(parsed?.command, 'tosound', `Perintah ${raw} wajib dipetakan ke tosound`);
+    assert.equal(parsed?.isMediaCommand, true);
+  }
+  assert.match(buildMenuText(), /!tosound/);
+
+  // 2. Verifikasi deteksi magic bytes audio
+  assert.equal(detectAudioMediaKind(Buffer.concat([Buffer.from('OggS'), Buffer.alloc(16)])), 'ogg');
+  assert.equal(detectAudioMediaKind(Buffer.concat([Buffer.alloc(4), Buffer.from('ftypM4A '), Buffer.alloc(8)])), 'm4a');
+  assert.equal(detectAudioMediaKind(Buffer.concat([Buffer.from('ID3'), Buffer.alloc(16)])), 'mp3');
+  assert.equal(detectAudioMediaKind(Buffer.concat([Buffer.from('RIFF'), Buffer.alloc(4), Buffer.from('WAVE'), Buffer.alloc(4)])), 'wav');
+  assert.equal(detectAudioMediaKind(Buffer.concat([Buffer.from('fLaC'), Buffer.alloc(16)])), 'flac');
+  assert.equal(detectAudioMediaKind(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0])), null);
+
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'another-me-tosound-test-'));
+  const videoWithAudioPath = path.join(tmpDir, 'with_audio.mp4');
+  const silentVideoPath = path.join(tmpDir, 'silent.mp4');
+  const sampleGifPath = path.join(tmpDir, 'sample.gif');
+  const outM4aPath = path.join(tmpDir, 'out.m4a');
+  const outOggPath = path.join(tmpDir, 'out.ogg');
+
+  try {
+    const ffmpegBin = process.env.FFMPEG_PATH || 'ffmpeg';
+    // Buat video MP4 2 detik DENGAN audio dan 1 detik TANPA audio + GIF
+    await execFileAsync(
+      ffmpegBin,
+      [
+        '-y',
+        '-f', 'lavfi', '-i', 'testsrc=size=320x240:rate=10:duration=2',
+        '-f', 'lavfi', '-i', 'sine=frequency=440:duration=2',
+        '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
+        '-c:a', 'aac', '-shortest',
+        videoWithAudioPath
+      ],
+      { timeout: 20000, windowsHide: true }
+    );
+    await execFileAsync(
+      ffmpegBin,
+      [
+        '-y',
+        '-f', 'lavfi', '-i', 'testsrc=size=160x120:rate=10:duration=1',
+        '-an',
+        '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
+        silentVideoPath
+      ],
+      { timeout: 20000, windowsHide: true }
+    );
+    await execFileAsync(
+      ffmpegBin,
+      ['-y', '-f', 'lavfi', '-i', 'testsrc=size=120x120:rate=8:duration=1', sampleGifPath],
+      { timeout: 20000, windowsHide: true }
+    );
+
+    const videoWithAudioBuf = fs.readFileSync(videoWithAudioPath);
+    const silentVideoBuf = fs.readFileSync(silentVideoPath);
+    const sampleGifBuf = fs.readFileSync(sampleGifPath);
+
+    // Ekstrak audio Stiker Suara OGG/Opus nyata untuk uji stiker bersuara
+    const soundStk = await convertVideoOrGifToSticker(videoWithAudioBuf, { includeAudio: true });
+    assert.equal(soundStk.hasAudio, true);
+
+    // 3. Unit test extractSoundFromVideo (mode audio biasa & mode voice note)
+    const audioRes = await extractSoundFromVideo(videoWithAudioBuf, { asVoiceNote: false });
+    assert.equal(audioRes.kind, 'audio');
+    assert.equal(audioRes.mimeType, 'audio/mp4');
+    assert.equal(audioRes.ptt, false);
+    assert.ok(audioRes.seconds >= 1 && audioRes.seconds <= 3);
+    assert.equal(audioRes.waveform, undefined);
+    fs.writeFileSync(outM4aPath, audioRes.buffer);
+    const probedM4a = await probeVideoAudioInfo(outM4aPath);
+    assert.equal(probedM4a.hasAudio, true, 'Hasil M4A !tosound wajib memiliki trek audio');
+
+    const vnRes = await extractSoundFromVideo(videoWithAudioBuf, { asVoiceNote: true });
+    assert.equal(vnRes.kind, 'voice_note');
+    assert.equal(vnRes.mimeType, 'audio/ogg; codecs=opus');
+    assert.equal(vnRes.ptt, true);
+    assert.ok(vnRes.seconds >= 1);
+    assert.ok(vnRes.waveform instanceof Uint8Array && vnRes.waveform.length === 64, 'Pesan suara wajib membawa waveform 64 sampel');
+    assert.ok(vnRes.waveform.some((v) => v > 0), 'Waveform audio berbunyi tidak boleh seluruhnya nol');
+    fs.writeFileSync(outOggPath, vnRes.buffer);
+    const probedOgg = await probeVideoAudioInfo(outOggPath);
+    assert.equal(probedOgg.hasAudio, true, 'Hasil OGG !tosound vn wajib memiliki trek audio');
+
+    // Video bisu & GIF ditolak dengan kode NO_AUDIO
+    await assert.rejects(
+      () => extractSoundFromVideo(silentVideoBuf),
+      (err) => err instanceof MediaValidationError && err.code === 'NO_AUDIO'
+    );
+    await assert.rejects(
+      () => extractSoundFromVideo(sampleGifBuf),
+      (err) => err instanceof MediaValidationError && err.code === 'NO_AUDIO'
+    );
+
+    // FFmpeg tidak ditemukan -> userMessage tetap ramah tanpa istilah teknis FFmpeg
+    await assert.rejects(
+      () => extractSoundFromVideo(videoWithAudioBuf, { ffmpegPath: 'nonexistent-ffmpeg-binary-xyz' }),
+      (err) =>
+        err instanceof MediaValidationError &&
+        err.code === 'FFMPEG_MISSING' &&
+        !/ffmpeg/i.test(err.userMessage) &&
+        /ffmpeg/i.test(err.message)
+    );
+
+    // 4. Unit test convertSoundBufferToWhatsAppAudio (OGG stiker suara -> M4A, VN, & fallback tanpa FFmpeg)
+    const convertedFromStk = await convertSoundBufferToWhatsAppAudio(soundStk.audioBuffer, {
+      asVoiceNote: false,
+      audioSecondsHint: soundStk.audioSeconds
+    });
+    assert.equal(convertedFromStk.mimeType, 'audio/mp4');
+    assert.equal(convertedFromStk.ptt, false);
+    assert.ok(convertedFromStk.buffer.length > 0);
+
+    const fallbackOgg = await convertSoundBufferToWhatsAppAudio(soundStk.audioBuffer, {
+      asVoiceNote: false,
+      audioSecondsHint: 4,
+      ffmpegPath: 'nonexistent-ffmpeg-binary-xyz'
+    });
+    assert.equal(fallbackOgg.mimeType, 'audio/ogg; codecs=opus');
+    assert.deepEqual(fallbackOgg.buffer, soundStk.audioBuffer);
+    assert.equal(fallbackOgg.seconds, 4);
+
+    // 5. Uji end-to-end handleUtilityCommands untuk !tosound / .tosound
+    const sent = [];
+    const logs = [];
+    const mockSock = {
+      sendMessage: async (jid, content) => {
+        sent.push({ jid, content });
+        return { key: { id: `tosound-${sent.length}` } };
+      }
+    };
+
+    // 5a. Video langsung dengan caption !tosound -> audio/mp4 (ptt: false)
+    await handleUtilityCommands({
+      waSocket: mockSock,
+      downloadMediaBuffer: async () => videoWithAudioBuf,
+      remoteJid: '628111@s.whatsapp.net',
+      senderKey: 'owner',
+      fromMe: true,
+      profile: { isKnown: true, name: 'Pemilik' },
+      messageText: '!tosound',
+      msg: {
+        key: { remoteJid: '628111@s.whatsapp.net', id: 'ts-vid-1', fromMe: true },
+        message: {
+          videoMessage: {
+            caption: '!tosound',
+            mimetype: 'video/mp4',
+            fileLength: videoWithAudioBuf.length,
+            seconds: 2
+          }
+        }
+      },
+      addLog: (type, text) => logs.push({ type, text })
+    });
+    assert.ok(Buffer.isBuffer(sent[0].content.audio));
+    assert.equal(sent[0].content.mimetype, 'audio/mp4');
+    assert.equal(sent[0].content.ptt, false);
+    assert.ok(sent[0].content.seconds >= 1);
+
+    // 5b. Balas video dengan .tovn -> voice note OGG/Opus (ptt: true) + waveform
+    await handleUtilityCommands({
+      waSocket: mockSock,
+      downloadMediaBuffer: async () => videoWithAudioBuf,
+      remoteJid: '628111@s.whatsapp.net',
+      senderKey: 'owner',
+      fromMe: true,
+      profile: { isKnown: true, name: 'Pemilik' },
+      messageText: '.tovn',
+      msg: {
+        key: { remoteJid: '628111@s.whatsapp.net', id: 'ts-vn-1', fromMe: true },
+        message: {
+          extendedTextMessage: {
+            text: '.tovn',
+            contextInfo: {
+              stanzaId: 'quoted-vid-1',
+              quotedMessage: {
+                videoMessage: {
+                  mimetype: 'video/mp4',
+                  fileLength: videoWithAudioBuf.length,
+                  seconds: 2
+                }
+              }
+            }
+          }
+        }
+      },
+      addLog: () => {}
+    });
+    assert.ok(Buffer.isBuffer(sent[1].content.audio));
+    assert.equal(sent[1].content.mimetype, 'audio/ogg; codecs=opus');
+    assert.equal(sent[1].content.ptt, true);
+    assert.ok(sent[1].content.waveform instanceof Uint8Array && sent[1].content.waveform.length === 64);
+
+    // 5c. Balas Video Note bulat (ptvMessage) dengan !tosound -> audio/mp4
+    await handleUtilityCommands({
+      waSocket: mockSock,
+      downloadMediaBuffer: async () => videoWithAudioBuf,
+      remoteJid: '628111@s.whatsapp.net',
+      senderKey: 'owner',
+      fromMe: true,
+      profile: { isKnown: true, name: 'Pemilik' },
+      messageText: '!tosound',
+      msg: {
+        key: { remoteJid: '628111@s.whatsapp.net', id: 'ts-ptv-1', fromMe: true },
+        message: {
+          extendedTextMessage: {
+            text: '!tosound',
+            contextInfo: {
+              stanzaId: 'quoted-ptv-1',
+              quotedMessage: {
+                ptvMessage: {
+                  mimetype: 'video/mp4',
+                  fileLength: videoWithAudioBuf.length,
+                  seconds: 2
+                }
+              }
+            }
+          }
+        }
+      },
+      addLog: () => {}
+    });
+    assert.ok(Buffer.isBuffer(sent[2].content.audio));
+    assert.equal(sent[2].content.mimetype, 'audio/mp4');
+    assert.equal(sent[2].content.ptt, false);
+
+    // 5d. Balas Stiker Bersuara dengan .tosound (tanpa perlu mengunduh visual WebP-nya)
+    let webpDownloadCalled = false;
+    await handleUtilityCommands({
+      waSocket: mockSock,
+      downloadMediaBuffer: async () => {
+        webpDownloadCalled = true;
+        return soundStk.stickerBuffer;
+      },
+      resolveStickerAudio: async () => ({
+        audioBuffer: soundStk.audioBuffer,
+        audioSeconds: soundStk.audioSeconds
+      }),
+      remoteJid: '628111@s.whatsapp.net',
+      senderKey: 'owner',
+      fromMe: true,
+      profile: { isKnown: true, name: 'Pemilik' },
+      messageText: '.tosound',
+      msg: {
+        key: { remoteJid: '628111@s.whatsapp.net', id: 'ts-stk-1', fromMe: true },
+        message: {
+          extendedTextMessage: {
+            text: '.tosound',
+            contextInfo: {
+              stanzaId: 'quoted-sound-stk-1',
+              quotedMessage: {
+                stickerMessage: {
+                  mimetype: 'image/webp',
+                  fileLength: soundStk.stickerBuffer.length,
+                  isAnimated: true
+                }
+              }
+            }
+          }
+        }
+      },
+      addLog: () => {}
+    });
+    assert.equal(webpDownloadCalled, false, '.tosound stiker bersuara tidak perlu mengunduh visual WebP');
+    assert.ok(Buffer.isBuffer(sent[3].content.audio));
+    assert.equal(sent[3].content.mimetype, 'audio/mp4');
+    assert.equal(sent[3].content.ptt, false);
+
+    // 5e. Balas Stiker Bersuara dengan !tosound vn -> Voice Note
+    await handleUtilityCommands({
+      waSocket: mockSock,
+      downloadMediaBuffer: async () => soundStk.stickerBuffer,
+      resolveStickerAudio: async () => ({
+        audioBuffer: soundStk.audioBuffer,
+        audioSeconds: soundStk.audioSeconds
+      }),
+      remoteJid: '628111@s.whatsapp.net',
+      senderKey: 'owner',
+      fromMe: true,
+      profile: { isKnown: true, name: 'Pemilik' },
+      messageText: '!tosound vn',
+      msg: {
+        key: { remoteJid: '628111@s.whatsapp.net', id: 'ts-stk-vn', fromMe: true },
+        message: {
+          extendedTextMessage: {
+            text: '!tosound vn',
+            contextInfo: {
+              stanzaId: 'quoted-sound-stk-2',
+              quotedMessage: {
+                stickerMessage: { mimetype: 'image/webp', isAnimated: true }
+              }
+            }
+          }
+        }
+      },
+      addLog: () => {}
+    });
+    assert.equal(sent[4].content.ptt, true);
+    assert.equal(sent[4].content.mimetype, 'audio/ogg; codecs=opus');
+
+    // 5f. Balas stiker tanpa suara (termasuk yang bertanda bidang 24) -> pesan ramah tanpa jargon teknis, catatan PDO hanya ke log
+    const silentField24Msg = {
+      key: { remoteJid: '628111@s.whatsapp.net', id: 'ts-stk-silent', fromMe: true },
+      message: {
+        extendedTextMessage: {
+          text: '!tosound',
+          contextInfo: {
+            stanzaId: 'quoted-silent-f24',
+            quotedMessage: {
+              stickerMessage: { mimetype: 'image/webp', isAnimated: false }
+            }
+          }
+        }
+      }
+    };
+    Object.defineProperty(
+      silentField24Msg.message.extendedTextMessage.contextInfo.quotedMessage.stickerMessage,
+      RAW_WIRE_FIELDS_SYMBOL,
+      { value: [1, 2, 24], enumerable: false, configurable: true }
+    );
+    const silentLogs = [];
+    await handleUtilityCommands({
+      waSocket: mockSock,
+      downloadMediaBuffer: async () => soundStk.stickerBuffer,
+      resolveStickerAudio: async () => null,
+      remoteJid: '628111@s.whatsapp.net',
+      senderKey: 'owner',
+      fromMe: true,
+      profile: { isKnown: true, name: 'Pemilik' },
+      messageText: '!tosound',
+      msg: silentField24Msg,
+      addLog: (type, text) => silentLogs.push({ type, text })
+    });
+    assert.match(sent[5].content.text, /tidak memiliki suara/i);
+    assert.doesNotMatch(sent[5].content.text, /PDO|Protobuf|cache|bidang 24/i);
+    assert.ok(silentLogs.some((l) => l.type === 'warn' && l.text.includes('bidang 24')));
+
+    // 5g. Penolakan pra-unduh: GIF WhatsApp, View Once video/audio, & video terlalu panjang
+    let unexpectedDownload = false;
+    const guardCases = [
+      {
+        id: 'ts-gif',
+        quoted: { videoMessage: { mimetype: 'video/mp4', gifPlayback: true, seconds: 3 } },
+        expectRe: /gambar bergerak tidak memiliki suara/i
+      },
+      {
+        id: 'ts-vo-vid',
+        quoted: { videoMessage: { mimetype: 'video/mp4', viewOnce: true, seconds: 3 } },
+        expectRe: /View Once/i
+      },
+      {
+        id: 'ts-vo-aud',
+        quoted: { audioMessage: { mimetype: 'audio/ogg; codecs=opus', viewOnce: true, ptt: true, seconds: 3 } },
+        expectRe: /View Once/i
+      },
+      {
+        id: 'ts-long',
+        quoted: { videoMessage: { mimetype: 'video/mp4', seconds: MAX_TOSOUND_VIDEO_SECONDS + 30 } },
+        expectRe: /terlalu panjang/i
+      },
+      {
+        id: 'ts-oversized',
+        quoted: { videoMessage: { mimetype: 'video/mp4', fileLength: MAX_TOSOUND_VIDEO_BYTES + 1024, seconds: 10 } },
+        expectRe: /maksimal 20 Megabyte/i
+      }
+    ];
+    for (const gc of guardCases) {
+      const before = sent.length;
+      await handleUtilityCommands({
+        waSocket: mockSock,
+        downloadMediaBuffer: async () => {
+          unexpectedDownload = true;
+          return videoWithAudioBuf;
+        },
+        remoteJid: '628111@s.whatsapp.net',
+        senderKey: 'owner',
+        fromMe: true,
+        profile: { isKnown: true, name: 'Pemilik' },
+        messageText: '!tosound',
+        msg: {
+          key: { remoteJid: '628111@s.whatsapp.net', id: gc.id, fromMe: true },
+          message: {
+            extendedTextMessage: {
+              text: '!tosound',
+              contextInfo: { stanzaId: `orig-${gc.id}`, quotedMessage: gc.quoted }
+            }
+          }
+        },
+        addLog: () => {}
+      });
+      assert.match(sent[before].content.text, gc.expectRe, `Kasus penjagaan ${gc.id} wajib sesuai`);
+    }
+    assert.equal(unexpectedDownload, false, 'Kasus penjagaan pra-unduh tidak boleh mengunduh media');
+
+    // 5h. Konversi pesan suara -> audio biasa (!tosound) dan panduan jika format sudah sama
+    const beforeAudioConv = sent.length;
+    await handleUtilityCommands({
+      waSocket: mockSock,
+      downloadMediaBuffer: async () => soundStk.audioBuffer,
+      remoteJid: '628111@s.whatsapp.net',
+      senderKey: 'owner',
+      fromMe: true,
+      profile: { isKnown: true, name: 'Pemilik' },
+      messageText: '!tosound',
+      msg: {
+        key: { remoteJid: '628111@s.whatsapp.net', id: 'ts-vn-to-aud', fromMe: true },
+        message: {
+          extendedTextMessage: {
+            text: '!tosound',
+            contextInfo: {
+              stanzaId: 'orig-vn-1',
+              quotedMessage: {
+                audioMessage: {
+                  mimetype: 'audio/ogg; codecs=opus',
+                  ptt: true,
+                  fileLength: soundStk.audioBuffer.length,
+                  seconds: 2
+                }
+              }
+            }
+          }
+        }
+      },
+      addLog: () => {}
+    });
+    assert.ok(Buffer.isBuffer(sent[beforeAudioConv].content.audio));
+    assert.equal(sent[beforeAudioConv].content.ptt, false);
+    assert.equal(sent[beforeAudioConv].content.mimetype, 'audio/mp4');
+
+    // Tanpa media -> panduan penggunaan
+    const beforeGuide = sent.length;
+    await handleUtilityCommands({
+      waSocket: mockSock,
+      downloadMediaBuffer: async () => Buffer.alloc(0),
+      remoteJid: '628111@s.whatsapp.net',
+      senderKey: 'owner',
+      fromMe: true,
+      profile: { isKnown: true, name: 'Pemilik' },
+      messageText: '.tosound',
+      msg: {
+        key: { remoteJid: '628111@s.whatsapp.net', id: 'ts-empty', fromMe: true },
+        message: { conversation: '.tosound' }
+      },
+      addLog: () => {}
+    });
+    assert.match(sent[beforeGuide].content.text, /!tosound/i);
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
